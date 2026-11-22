@@ -14,11 +14,23 @@ It needs Python 3 with Pillow and fontTools (lxml too, for full DTD validation).
 (SIL Open Font License, see `fonts/Inter-LICENSE.txt`), because skins2 only loads fonts shipped
 inside the skin.
 
-To try a build once without changing any VLC settings:
+With the Windows subtitle module installed, you can try the build in a separate VLC instance.
 
 ```bash
-"C:\Program Files\VideoLAN\VLC\vlc.exe" -I skins --skins2-last="C:\dev\vlcskin\dist\VLC-Redesign.vlt"
+"C:\Program Files\VideoLAN\VLC\vlc.exe" --ignore-config --no-one-instance -I skins --extraintf=subtitlepanel --skins2-last="C:\dev\vlcskin\dist\VLC-Redesign.vlt"
 ```
+
+### Windows subtitle test player
+
+`python tools/build_subtitle_player.py` builds a portable copy of 64-bit VLC 3.0.24 in
+`testplayer/`. It uses MinGW-w64 from MSYS2. Use `--vlc`, `--toolchain` and `--output` if
+the installation, compiler or destination is in a different folder. Open
+`testplayer/Start-VLC-Subtitle-Test.cmd` to use the live Video, Audio and Subtitles tabs.
+
+The interface module reads VLC's video, audio and subtitle choices and checks the track IDs against
+the metadata of local movie files. For sources without readable metadata it uses
+VLC's current choices. **None** disables the selected track type. The video and subtitle lists
+show up to ten tracks at a time. The **Audio** tab lists output devices reported by VLC's active audio output.
 
 ## What is in it
 

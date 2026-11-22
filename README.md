@@ -9,9 +9,13 @@ A skin for VLC 3 based on Juxtopposed's redesign of VLC.
 
 ## Install
 
-1. Download [`dist/VLC-Redesign.vlt`](dist/VLC-Redesign.vlt).
-2. In VLC, open **Tools → Preferences → Interface**, choose **Use custom skin** and pick the file.
-3. Save and restart VLC.
+This installer requires **VLC 3.0.24 (64-bit) on Windows**.
+
+1. Clone this branch and close VLC completely.
+2. Open `dist/Installer-VLC-Undertekster.cmd` from the cloned folder. Approve the administrator prompt if Windows displays it.
+3. Open VLC from your usual shortcut and play a file. The **Subtitles** button opens the panel. Use **Video**, **Audio** and **Subtitles** to select embedded tracks, or choose an output device under **Audio**. The video and subtitle lists show up to ten tracks at a time and scroll to the rest.
+
+The installer adds the subtitle module to VLC and installs and selects `VLC-Redesign.vlt`. It backs up existing VLC settings before changing them. Run the installer again to update an existing setup.
 
 With the skin on, Preferences are under **Settings** in the ••• menu at the top left.
 
@@ -33,8 +37,8 @@ and the design's library views don't exist in VLC 3. [docs/notes.md](docs/notes.
 
 ## Building
 
-`python build.py` regenerates `dist/`. It needs Python 3 with Pillow and fontTools.
-[docs/notes.md](docs/notes.md) explains how it works.
+`python build.py` regenerates `dist/VLC-Redesign.vlt` and its unpacked files. It needs Python 3 with Pillow and fontTools.
+[docs/notes.md](docs/notes.md) explains how to build the skin and the Windows subtitle module.
 
 ## Credits and license
 

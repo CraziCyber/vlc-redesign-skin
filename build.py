@@ -4,9 +4,7 @@
     python build.py
 
 Writes dist/VLC-Redesign/ (theme.xml, img/, fonts/) and dist/VLC-Redesign.vlt.
-Load either in VLC with Tools > Preferences > Interface > "Use custom skin", or run
-
-    vlc.exe -I skins --skins2-last="C:\\dev\\vlcskin\\dist\\VLC-Redesign.vlt"
+Run dist/Installer-VLC-Undertekster.cmd to install the subtitle module and select this skin.
 
 docs/notes.md explains what of the Figma design is in the skin and what skins2 cannot do.
 
@@ -31,8 +29,6 @@ sys.path.insert(0, str(ROOT / "tools"))
 import check_theme  # noqa: E402  (tools/ is not a package)
 
 NAME = "VLC-Redesign"
-DIST = ROOT / "dist"
-OUT = DIST / NAME
 ICONS = P.Icons()
 
 # The widest seek track whose fill can follow the handle (see progress()): a track this
@@ -44,7 +40,7 @@ ART_VIEW = "not vlc.isStopped and not vlc.hasVout"
 
 
 def lid(t, kind):
-    """Layout ids: dark_full, dark_side, dark_mini, dark_eq, dark_fsc and the light_ ones."""
+    """Prefix a layout kind with its theme name."""
     return f"{t['name']}_{kind}"
 
 
@@ -55,6 +51,7 @@ def other(t):
 def switch_theme(t, kind):
     o = other(t)
     return (f"main.setLayout({lid(o, kind)});eqwin.setLayout({lid(o, 'eq')});"
+            f"subtitlewin.setLayout({lid(o, 'subtitles')});"
             f"fullscreenController.setLayout({lid(o, 'fsc')})")
 
 
@@ -85,20 +82,25 @@ class Art:
         return tuple(self.get(f"{key}.{name}", lambda s=spec: draw(*s), on, opaque=True)
                      for name, spec in zip(("up", "over", "down"), specs))
 
-    def icon_button(self, icon, w=30, h=28, ix=3, iy=2, r=6, active=False, on="chrome"):
+    def icon_button(self, icon, w=30, h=28, ix=3, iy=2, r=6, active=False, on="chrome",
+                    *, original_colors=False):
         """A flat icon button: just the icon, with a rounded highlight on hover.
-        Active buttons draw the icon in the accent colour."""
+        Active buttons draw the icon in the accent colour. Original colours preserve
+        the two-tone artwork in every button state."""
         t = self.t
 
         def draw(bg, color):
             img = P.blank(w, h)
             if bg:
                 img.alpha_composite(P.rrect(w, h, (0, 0, w, h), r, t[bg]))
-            img.alpha_composite(ICONS.tint(icon, t[color]), (ix, iy))
+            glyph = ICONS.raw(icon) if original_colors else ICONS.tint(icon, t[color])
+            img.alpha_composite(glyph, (ix, iy))
             return img
         fg = ("accent", "accent_hover", "accent_down") if active else ("icon", "icon_hover", "icon_down")
-        return self.states(f"ib.{icon}.{w}x{h}.{ix}.{iy}{'.on' if active else ''}", draw,
-                           ((None, fg[0]), ("hover_bg", fg[1]), ("down_bg", fg[2])), on)
+        key = f"ib.{icon}.{w}x{h}.{ix}.{iy}{'.on' if active else ''}"
+        if original_colors:
+            key += ".raw"
+        return self.states(key, draw, ((None, fg[0]), ("hover_bg", fg[1]), ("down_bg", fg[2])), on)
 
     def accent_button(self, icon, w, h, r=6, on="chrome"):
         """The orange play/pause pill."""
@@ -125,7 +127,9 @@ class Art:
         down_bg = P.mix(t["close_hover"], "#000000", .15) if danger else t["down_bg"]
         return self.states(f"wb.{icon}", draw, ((None, t["icon"]), (over_bg, over_fg), (down_bg, over_fg)), on)
 
-    def labelled_button(self, key, icon, label, w, h, ix, iy, tx, base, size, on, colors=("icon", "icon_hover", "icon_down")):
+    def labelled_button(self, key, icon, label, w, h, ix, iy, tx, base, size, on,
+                        colors=("icon", "icon_hover", "icon_down"), *, icon_color=None,
+                        original_colors=False):
         """An icon followed by text, e.g. the top bar's 'Open media'."""
         t = self.t
 
@@ -133,7 +137,8 @@ class Art:
             img = P.blank(w, h)
             if bg:
                 img.alpha_composite(P.rrect(w, h, (0, 0, w, h), 6, t[bg]))
-            img.alpha_composite(ICONS.tint(icon, t[color]), (ix, iy))
+            glyph = ICONS.raw(icon) if original_colors else ICONS.tint(icon, t[icon_color or color])
+            img.alpha_composite(glyph, (ix, iy))
             return P.text(img, tx, base, label, size, t[color])
         return self.states(key, draw, ((None, colors[0]), ("hover_bg", colors[1]), ("down_bg", colors[2])), on)
 
@@ -244,8 +249,10 @@ def control_bar(L, art, oy, W, *, fixed, bg, last):
     L.toggle("eqwin.isVisible", art.icon_button("audio", 30, 32, 3, 4),
                art.icon_button("audio", 30, 32, 3, 4, active=True), "eqwin.show()", "eqwin.hide()",
                "Equalizer", "Hide equalizer", x=W - 184, y=oy + 11, anchor=A("br"))
-    L.button(art.icon_button("subtitles", 30, 32, 3, 4), W - 142, oy + 11, "dialogs.popup()",
-             "Subtitles, tracks and the rest of VLC's menu", anchor=A("br"))
+    L.toggle("subtitlewin.isVisible", art.icon_button("subtitles", 30, 32, 3, 4),
+             art.icon_button("subtitles_active", 30, 32, 3, 4, original_colors=True),
+             "subtitlewin.show()", "subtitlewin.hide()", "Open subtitles", "Close subtitles",
+             x=W - 142, y=oy + 11, anchor=A("br"))
     L.button(art.icon_button("playback_settings", 30, 32, 3, 4), W - 100, oy + 11, "playback_menu.show()",
              "Playback", anchor=A("br"))
     last(W - 50, oy + 11, A("br"))
@@ -538,6 +545,61 @@ def eq_layout(skin, win, t):
     return L
 
 
+# --- media tracks ------------------------------------------------------------------
+
+def tracks_layout(skin, win, t, page):
+    # The Windows module uses the layout sizes to attach the matching controls.
+    W, H = 368, {"video": 481, "audio": 504, "subtitles": 480}[page]
+    L = Layout(skin, win, lid(t, page), W, H)
+    art = Art(skin, t)
+    body_top, divider_y = 46, 228 if page == "audio" else 370
+    tab_w = 104
+    tabs = {
+        "video": (20, 14, 42, "video_active"),
+        "audio": (136, 23, 51, None),
+        "subtitles": (252, 10, 38, "subtitles_active"),
+    }
+
+    bg = P.rrect(W, H, (0, 0, W, H), 12, t["panel"])
+    bg.paste(P.solid(W, body_top, t["track"]), (0, 0))
+    bg.paste(P.solid(tab_w, 2, t["accent"]), (tabs[page][0], body_top - 2))
+    P.text(bg, 26, 80, "Embedded Tracks", 14, t["text"])
+    secondary = {"audio": "Output Device", "subtitles": "External Tracks"}.get(page)
+    if secondary:
+        bg.paste(P.solid(W, 1, t["divider"]), (0, divider_y))
+        P.text(bg, 26, divider_y + 34, secondary, 14, t["text"])
+    # Trim the faint resampling fringe from the VLC window outline.
+    bg.putalpha(bg.getchannel("A").point(lambda coverage: coverage if coverage >= 128 else 0))
+    L.image(art.get(f"{page}.bg", bg, on="track"), 0, 0, hint="bg")
+
+    for tab_page, (tab_x, icon_x, text_x, active_icon) in tabs.items():
+        active = tab_page == page
+        label = tab_page.capitalize()
+        use_active_icon = active and active_icon is not None
+        icon = active_icon if use_active_icon else tab_page
+        tab = art.labelled_button(f"{tab_page}.tab.{page}", icon, label, tab_w, 32,
+                                  icon_x, 4, text_x, 21, 13, "track",
+                                  icon_color="accent" if active and tab_page == "audio" else None,
+                                  original_colors=use_active_icon)
+        action = "subtitlewin.hide()" if active else f"subtitlewin.setLayout({lid(t, tab_page)})"
+        L.button(tab, tab_x, 7, action, "Close panel" if active else f"Show {label}")
+
+    if page == "subtitles":
+        L.button(art.icon_button("add", 32, 32, 4, 4, on="panel"), W - 52, divider_y + 13,
+                 "dialogs.popup()", "Open VLC's Subtitle menu to add a file")
+
+    prefs_w, prefs_h = W - 36, 32
+
+    def draw_prefs(background, color):
+        img = P.rrect(prefs_w, prefs_h, (0, 0, prefs_w, prefs_h), 4, t[background])
+        return P.text(img, prefs_w // 2, 21, "Show Preferences", 14, t[color], align="center")
+
+    prefs = art.states("subtitles.prefs", draw_prefs,
+                       (("track", "text"), ("hover_bg", "text_hi"), ("down_bg", "text_hi")), "panel")
+    L.button(prefs, 18, H - 18 - prefs_h, "subtitlewin.hide();dialogs.prefs()", "Show Preferences")
+    return L
+
+
 # --- fullscreen controller ----------------------------------------------------------
 
 def fsc_layout(skin, win, t):
@@ -612,14 +674,17 @@ def menus(skin):
 MAIN_KINDS = ("full", "side", "mini")
 
 
-def build(start="dark_full", show_eq=False, preview_fsc=False):
+def build(start="dark_full", show_eq=False, preview_fsc=False, *, dist_dir=None):
     """start: the layout the main window opens with (VLC remembers the last one used
     after that). show_eq opens the equalizer too. preview_fsc renames the fullscreen
-    controller so it opens as an ordinary window. The last two are for screenshots."""
-    if OUT.exists():
-        shutil.rmtree(OUT)
+    controller so it opens as an ordinary window. The last two are for screenshots.
+    dist_dir lets the Windows test player build the same skin in its own folder."""
+    dist = ROOT / "dist" if dist_dir is None else Path(dist_dir)
+    output = dist / NAME
+    if output.exists():
+        shutil.rmtree(output)
     rows = P.rows_font(Path(tempfile.mkdtemp()) / "InterRows-Regular.ttf", ROW_TEXT, ROW)
-    skin = Skin("VLC Redesign", "Design by Juxtopposed, skinned by build.py", OUT,
+    skin = Skin("VLC Redesign", "Design by Juxtopposed, skinned by build.py", output,
                 {**P.FONT_FILES, "rows": rows}, P.FONT_LICENSE,
                 webpage="https://github.com/mamogh/vlc-redesign-skin")
     menus(skin)
@@ -634,17 +699,21 @@ def build(start="dark_full", show_eq=False, preview_fsc=False):
         else:
             full_layout(skin, main, t, kind == "side")
     eq = skin.window("eqwin", visible="true" if show_eq else "false", position="Center")
+    subtitles = skin.window("subtitlewin", visible="false", position="Center")
     fsc = (skin.window("fscpreview", position="Center") if preview_fsc else
            skin.window("fullscreenController", position="South", ymargin="3%"))
     for t in (other(start_t), start_t):
         eq_layout(skin, eq, t)
+        tracks_layout(skin, subtitles, t, "video")
+        tracks_layout(skin, subtitles, t, "audio")
+        tracks_layout(skin, subtitles, t, "subtitles")
         fsc_layout(skin, fsc, t)
 
     skin.write()
-    problems = check_theme.check(OUT / "theme.xml")
+    problems = check_theme.check(output / "theme.xml")
     if problems:
         raise SystemExit("theme.xml has problems:\n  " + "\n  ".join(problems))
-    vlt = DIST / f"{NAME}.vlt"
+    vlt = dist / f"{NAME}.vlt"
     # dist/ is committed, so the archive is made byte-for-byte reproducible: no timestamps,
     # owners or ordering that change from build to build
     def plain(info):
@@ -652,11 +721,11 @@ def build(start="dark_full", show_eq=False, preview_fsc=False):
         return info
     with open(vlt, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="") as gz, \
             tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tar:
-        tar.add(OUT, arcname=NAME, recursive=False, filter=plain)
-        for path in sorted(OUT.rglob("*")):
-            tar.add(path, arcname=f"{NAME}/{path.relative_to(OUT).as_posix()}", recursive=False, filter=plain)
-    images = len(list((OUT / "img").glob("*.png")))
-    print(f"{OUT / 'theme.xml'}: {images} images")
+        tar.add(output, arcname=NAME, recursive=False, filter=plain)
+        for path in sorted(output.rglob("*")):
+            tar.add(path, arcname=f"{NAME}/{path.relative_to(output).as_posix()}", recursive=False, filter=plain)
+    images = len(list((output / "img").glob("*.png")))
+    print(f"{output / 'theme.xml'}: {images} images")
     print(f"{vlt}: {vlt.stat().st_size // 1024} KiB")
 
 

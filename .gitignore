@@ -1,6 +1,7 @@
 # tools/run_skin.py output and generated test media
 shots/
 testmedia/
+testplayer/
 __pycache__/
 # a VLC log captured for debugging
 vlc-debug.log
