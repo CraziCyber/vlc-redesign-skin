@@ -1,7 +1,50 @@
-# tools/run_skin.py output and generated test media
+# Local VLC tests and settings
 shots/
 testmedia/
 testplayer/
+portable/
+*.log
+*.log.*
+vlcrc
+vlcrc.*
+vlc-qt-interface.ini
+ml.xspf
+plugins.dat
+
+# Python environments and caches
 __pycache__/
-# a VLC log captured for debugging
-vlc-debug.log
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment files and credentials
+.env
+.env.*
+.envrc
+.ssh/
+.aws/
+.netrc
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.key
+*.pem
+*.ppk
+*.p12
+*.pfx
+credentials.json
+secrets.json
+
+# Local editor and operating system files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.user
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
