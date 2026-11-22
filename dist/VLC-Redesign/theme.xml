@@ -663,9 +663,29 @@
       <Button id="dark_side.tgl67" x="1138" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="dark.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="dark.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="dark_side.btn68" x="1180" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.playback_settings.30x32.3.4.up@chrome.o" over="dark.ib.playback_settings.30x32.3.4.over@chrome.o" down="dark.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="dark_side.btn69" x="1230" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.lists.30x32.3.4.on.up@chrome.o" over="dark.ib.lists.30x32.3.4.on.over@chrome.o" down="dark.ib.lists.30x32.3.4.on.down@chrome.o" action="main.setLayout(dark_full)" tooltiptext="Hide playlist"/>
-      <Image id="dark_side.gripE70" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="dark.px.chrome" resize="scale" action="resizeE"/>
-      <Image id="dark_side.gripS71" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="dark.px.chrome" resize="scale" action="resizeS"/>
-      <Image id="dark_side.gripSE72" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="dark.px.chrome" resize="scale" action="resizeSE"/>
+      <Panel id="dark_side.panel70" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="dark_side.open_files71" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.file()"/>
+        <Button id="dark_side.open_folder72" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.directory()"/>
+        <Button id="dark_side.open_disc73" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.disc()"/>
+        <Button id="dark_side.open_network74" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.net()"/>
+        <Button id="dark_side.convert75" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="dark_side.settings76" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.prefs()"/>
+        <Button id="dark_side.media_info77" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="dark_side.messages78" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.messages()"/>
+        <Button id="dark_side.change_skin79" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="dark_side.vlc_menu80" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.popup()"/>
+        <Button id="dark_side.on_top81" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="vlc.onTop()"/>
+        <Button id="dark_side.eq82" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="eqwin.show()"/>
+        <Button id="dark_side.video_tracks83" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_video);subtitlewin.show()"/>
+        <Button id="dark_side.audio_tracks84" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_audio);subtitlewin.show()"/>
+        <Button id="dark_side.subtitles85" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_subtitles);subtitlewin.show()"/>
+        <Button id="dark_side.toggle_playlist86" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="main.setLayout(dark_full)"/>
+        <Button id="dark_side.load_playlist87" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.load()"/>
+        <Button id="dark_side.save_playlist88" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.save()"/>
+      </Panel>
+      <Image id="dark_side.gripE89" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="dark.px.chrome" resize="scale" action="resizeE"/>
+      <Image id="dark_side.gripS90" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="dark.px.chrome" resize="scale" action="resizeS"/>
+      <Image id="dark_side.gripSE91" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="dark.px.chrome" resize="scale" action="resizeSE"/>
     </Layout>
     <Layout id="dark_mini" width="391" height="339" minwidth="391" maxwidth="391" minheight="339" maxheight="339">
       <Image id="dark_mini.bg1" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" image="dark.mini.bg" action="move"/>
@@ -688,6 +708,26 @@
       <Button id="dark_mini.btn18" x="289" y="284" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.lists.30x28.3.2.up@chrome.o" over="dark.ib.lists.30x28.3.2.over@chrome.o" down="dark.ib.lists.30x28.3.2.down@chrome.o" action="main.setLayout(dark_side)" tooltiptext="Full player with playlist"/>
       <Button id="dark_mini.btn19" x="321" y="284" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.window.30x28.3.2.up@chrome.o" over="dark.ib.window.30x28.3.2.over@chrome.o" down="dark.ib.window.30x28.3.2.down@chrome.o" action="main.setLayout(dark_full)" tooltiptext="Full player"/>
       <Button id="dark_mini.btn20" x="353" y="284" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.close.30x28.3.2.up@chrome.o" over="dark.ib.close.30x28.3.2.over@chrome.o" down="dark.ib.close.30x28.3.2.down@chrome.o" action="vlc.quit()" tooltiptext="Quit VLC"/>
+      <Panel id="dark_mini.panel21" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="dark_mini.open_files22" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.file()"/>
+        <Button id="dark_mini.open_folder23" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.directory()"/>
+        <Button id="dark_mini.open_disc24" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.disc()"/>
+        <Button id="dark_mini.open_network25" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.net()"/>
+        <Button id="dark_mini.convert26" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="dark_mini.settings27" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.prefs()"/>
+        <Button id="dark_mini.media_info28" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="dark_mini.messages29" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.messages()"/>
+        <Button id="dark_mini.change_skin30" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="dark_mini.vlc_menu31" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.popup()"/>
+        <Button id="dark_mini.on_top32" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="vlc.onTop()"/>
+        <Button id="dark_mini.eq33" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="eqwin.show()"/>
+        <Button id="dark_mini.video_tracks34" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_video);subtitlewin.show()"/>
+        <Button id="dark_mini.audio_tracks35" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_audio);subtitlewin.show()"/>
+        <Button id="dark_mini.subtitles36" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_subtitles);subtitlewin.show()"/>
+        <Button id="dark_mini.toggle_playlist37" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="main.setLayout(dark_side)"/>
+        <Button id="dark_mini.load_playlist38" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.load()"/>
+        <Button id="dark_mini.save_playlist39" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.save()"/>
+      </Panel>
     </Layout>
     <Layout id="light_full" width="1280" height="720" minwidth="860" maxwidth="99999" minheight="420" maxheight="99999">
       <Image id="light_full.bg1" x="0" y="0" lefttop="lefttop" rightbottom="rightbottom" width="1280" height="720" image="light.px.chrome" resize="scale" action="move"/>
@@ -736,9 +776,29 @@
       <Button id="light_full.tgl43" x="1138" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="light.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="light.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="light_full.btn44" x="1180" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.playback_settings.30x32.3.4.up@chrome.o" over="light.ib.playback_settings.30x32.3.4.over@chrome.o" down="light.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="light_full.btn45" x="1230" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.lists.30x32.3.4.up@chrome.o" over="light.ib.lists.30x32.3.4.over@chrome.o" down="light.ib.lists.30x32.3.4.down@chrome.o" action="main.setLayout(light_side)" tooltiptext="Show playlist"/>
-      <Image id="light_full.gripE46" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="light.px.chrome" resize="scale" action="resizeE"/>
-      <Image id="light_full.gripS47" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="light.px.chrome" resize="scale" action="resizeS"/>
-      <Image id="light_full.gripSE48" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="light.px.chrome" resize="scale" action="resizeSE"/>
+      <Panel id="light_full.panel46" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="light_full.open_files47" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.file()"/>
+        <Button id="light_full.open_folder48" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.directory()"/>
+        <Button id="light_full.open_disc49" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.disc()"/>
+        <Button id="light_full.open_network50" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.net()"/>
+        <Button id="light_full.convert51" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="light_full.settings52" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.prefs()"/>
+        <Button id="light_full.media_info53" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="light_full.messages54" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.messages()"/>
+        <Button id="light_full.change_skin55" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="light_full.vlc_menu56" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.popup()"/>
+        <Button id="light_full.on_top57" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="vlc.onTop()"/>
+        <Button id="light_full.eq58" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="eqwin.show()"/>
+        <Button id="light_full.video_tracks59" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_video);subtitlewin.show()"/>
+        <Button id="light_full.audio_tracks60" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_audio);subtitlewin.show()"/>
+        <Button id="light_full.subtitles61" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_subtitles);subtitlewin.show()"/>
+        <Button id="light_full.toggle_playlist62" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="main.setLayout(light_side)"/>
+        <Button id="light_full.load_playlist63" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.load()"/>
+        <Button id="light_full.save_playlist64" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.save()"/>
+      </Panel>
+      <Image id="light_full.gripE65" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="light.px.chrome" resize="scale" action="resizeE"/>
+      <Image id="light_full.gripS66" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="light.px.chrome" resize="scale" action="resizeS"/>
+      <Image id="light_full.gripSE67" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="light.px.chrome" resize="scale" action="resizeSE"/>
     </Layout>
     <Layout id="light_side" width="1280" height="720" minwidth="1040" maxwidth="99999" minheight="420" maxheight="99999">
       <Image id="light_side.bg1" x="0" y="0" lefttop="lefttop" rightbottom="rightbottom" width="1280" height="720" image="light.px.chrome" resize="scale" action="move"/>
@@ -812,9 +872,29 @@
       <Button id="light_side.tgl67" x="1138" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="light.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="light.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="light_side.btn68" x="1180" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.playback_settings.30x32.3.4.up@chrome.o" over="light.ib.playback_settings.30x32.3.4.over@chrome.o" down="light.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="light_side.btn69" x="1230" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="light.ib.lists.30x32.3.4.on.up@chrome.o" over="light.ib.lists.30x32.3.4.on.over@chrome.o" down="light.ib.lists.30x32.3.4.on.down@chrome.o" action="main.setLayout(light_full)" tooltiptext="Hide playlist"/>
-      <Image id="light_side.gripE70" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="light.px.chrome" resize="scale" action="resizeE"/>
-      <Image id="light_side.gripS71" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="light.px.chrome" resize="scale" action="resizeS"/>
-      <Image id="light_side.gripSE72" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="light.px.chrome" resize="scale" action="resizeSE"/>
+      <Panel id="light_side.panel70" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="light_side.open_files71" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.file()"/>
+        <Button id="light_side.open_folder72" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.directory()"/>
+        <Button id="light_side.open_disc73" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.disc()"/>
+        <Button id="light_side.open_network74" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.net()"/>
+        <Button id="light_side.convert75" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="light_side.settings76" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.prefs()"/>
+        <Button id="light_side.media_info77" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="light_side.messages78" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.messages()"/>
+        <Button id="light_side.change_skin79" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="light_side.vlc_menu80" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.popup()"/>
+        <Button id="light_side.on_top81" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="vlc.onTop()"/>
+        <Button id="light_side.eq82" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="eqwin.show()"/>
+        <Button id="light_side.video_tracks83" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_video);subtitlewin.show()"/>
+        <Button id="light_side.audio_tracks84" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_audio);subtitlewin.show()"/>
+        <Button id="light_side.subtitles85" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_subtitles);subtitlewin.show()"/>
+        <Button id="light_side.toggle_playlist86" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="main.setLayout(light_full)"/>
+        <Button id="light_side.load_playlist87" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.load()"/>
+        <Button id="light_side.save_playlist88" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.save()"/>
+      </Panel>
+      <Image id="light_side.gripE89" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="light.px.chrome" resize="scale" action="resizeE"/>
+      <Image id="light_side.gripS90" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="light.px.chrome" resize="scale" action="resizeS"/>
+      <Image id="light_side.gripSE91" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="light.px.chrome" resize="scale" action="resizeSE"/>
     </Layout>
     <Layout id="light_mini" width="391" height="339" minwidth="391" maxwidth="391" minheight="339" maxheight="339">
       <Image id="light_mini.bg1" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" image="light.mini.bg" action="move"/>
@@ -837,6 +917,26 @@
       <Button id="light_mini.btn18" x="289" y="284" lefttop="lefttop" rightbottom="lefttop" up="light.ib.lists.30x28.3.2.up@chrome.o" over="light.ib.lists.30x28.3.2.over@chrome.o" down="light.ib.lists.30x28.3.2.down@chrome.o" action="main.setLayout(light_side)" tooltiptext="Full player with playlist"/>
       <Button id="light_mini.btn19" x="321" y="284" lefttop="lefttop" rightbottom="lefttop" up="light.ib.window.30x28.3.2.up@chrome.o" over="light.ib.window.30x28.3.2.over@chrome.o" down="light.ib.window.30x28.3.2.down@chrome.o" action="main.setLayout(light_full)" tooltiptext="Full player"/>
       <Button id="light_mini.btn20" x="353" y="284" lefttop="lefttop" rightbottom="lefttop" up="light.ib.close.30x28.3.2.up@chrome.o" over="light.ib.close.30x28.3.2.over@chrome.o" down="light.ib.close.30x28.3.2.down@chrome.o" action="vlc.quit()" tooltiptext="Quit VLC"/>
+      <Panel id="light_mini.panel21" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="light_mini.open_files22" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.file()"/>
+        <Button id="light_mini.open_folder23" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.directory()"/>
+        <Button id="light_mini.open_disc24" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.disc()"/>
+        <Button id="light_mini.open_network25" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.net()"/>
+        <Button id="light_mini.convert26" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="light_mini.settings27" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.prefs()"/>
+        <Button id="light_mini.media_info28" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="light_mini.messages29" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.messages()"/>
+        <Button id="light_mini.change_skin30" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="light_mini.vlc_menu31" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.popup()"/>
+        <Button id="light_mini.on_top32" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="vlc.onTop()"/>
+        <Button id="light_mini.eq33" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="eqwin.show()"/>
+        <Button id="light_mini.video_tracks34" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_video);subtitlewin.show()"/>
+        <Button id="light_mini.audio_tracks35" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_audio);subtitlewin.show()"/>
+        <Button id="light_mini.subtitles36" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_subtitles);subtitlewin.show()"/>
+        <Button id="light_mini.toggle_playlist37" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="main.setLayout(light_side)"/>
+        <Button id="light_mini.load_playlist38" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.load()"/>
+        <Button id="light_mini.save_playlist39" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.save()"/>
+      </Panel>
     </Layout>
     <Layout id="dark_full" width="1280" height="720" minwidth="860" maxwidth="99999" minheight="420" maxheight="99999">
       <Image id="dark_full.bg1" x="0" y="0" lefttop="lefttop" rightbottom="rightbottom" width="1280" height="720" image="dark.px.chrome" resize="scale" action="move"/>
@@ -885,9 +985,29 @@
       <Button id="dark_full.tgl43" x="1138" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="dark.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="dark.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="dark_full.btn44" x="1180" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.playback_settings.30x32.3.4.up@chrome.o" over="dark.ib.playback_settings.30x32.3.4.over@chrome.o" down="dark.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="dark_full.btn45" x="1230" y="677" lefttop="rightbottom" rightbottom="rightbottom" up="dark.ib.lists.30x32.3.4.up@chrome.o" over="dark.ib.lists.30x32.3.4.over@chrome.o" down="dark.ib.lists.30x32.3.4.down@chrome.o" action="main.setLayout(dark_side)" tooltiptext="Show playlist"/>
-      <Image id="dark_full.gripE46" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="dark.px.chrome" resize="scale" action="resizeE"/>
-      <Image id="dark_full.gripS47" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="dark.px.chrome" resize="scale" action="resizeS"/>
-      <Image id="dark_full.gripSE48" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="dark.px.chrome" resize="scale" action="resizeSE"/>
+      <Panel id="dark_full.panel46" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="dark_full.open_files47" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.file()"/>
+        <Button id="dark_full.open_folder48" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.directory()"/>
+        <Button id="dark_full.open_disc49" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.disc()"/>
+        <Button id="dark_full.open_network50" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.net()"/>
+        <Button id="dark_full.convert51" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="dark_full.settings52" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.prefs()"/>
+        <Button id="dark_full.media_info53" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="dark_full.messages54" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.messages()"/>
+        <Button id="dark_full.change_skin55" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="dark_full.vlc_menu56" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.popup()"/>
+        <Button id="dark_full.on_top57" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="vlc.onTop()"/>
+        <Button id="dark_full.eq58" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="eqwin.show()"/>
+        <Button id="dark_full.video_tracks59" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_video);subtitlewin.show()"/>
+        <Button id="dark_full.audio_tracks60" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_audio);subtitlewin.show()"/>
+        <Button id="dark_full.subtitles61" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_subtitles);subtitlewin.show()"/>
+        <Button id="dark_full.toggle_playlist62" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="main.setLayout(dark_side)"/>
+        <Button id="dark_full.load_playlist63" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.load()"/>
+        <Button id="dark_full.save_playlist64" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.save()"/>
+      </Panel>
+      <Image id="dark_full.gripE65" x="1275" y="0" lefttop="righttop" rightbottom="rightbottom" width="5" height="708" image="dark.px.chrome" resize="scale" action="resizeE"/>
+      <Image id="dark_full.gripS66" x="0" y="716" lefttop="leftbottom" rightbottom="rightbottom" width="1268" height="4" image="dark.px.chrome" resize="scale" action="resizeS"/>
+      <Image id="dark_full.gripSE67" x="1268" y="708" lefttop="rightbottom" rightbottom="rightbottom" width="12" height="12" image="dark.px.chrome" resize="scale" action="resizeSE"/>
     </Layout>
   </Window>
   <Window id="eqwin" visible="false" position="Center">
@@ -1042,6 +1162,26 @@
       <Button id="light_fsc.tgl21" x="858" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="light.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="light.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="light_fsc.btn22" x="900" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.ib.playback_settings.30x32.3.4.up@chrome.o" over="light.ib.playback_settings.30x32.3.4.over@chrome.o" down="light.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="light_fsc.btn23" x="950" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.ib.fullscreen_exit.30x32.3.4.up@chrome.o" over="light.ib.fullscreen_exit.30x32.3.4.over@chrome.o" down="light.ib.fullscreen_exit.30x32.3.4.down@chrome.o" action="vlc.fullscreen()" tooltiptext="Leave fullscreen"/>
+      <Panel id="light_fsc.panel24" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="light_fsc.open_files25" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.file()"/>
+        <Button id="light_fsc.open_folder26" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.directory()"/>
+        <Button id="light_fsc.open_disc27" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.disc()"/>
+        <Button id="light_fsc.open_network28" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.net()"/>
+        <Button id="light_fsc.convert29" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="light_fsc.settings30" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.prefs()"/>
+        <Button id="light_fsc.media_info31" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="light_fsc.messages32" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.messages()"/>
+        <Button id="light_fsc.change_skin33" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="light_fsc.vlc_menu34" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="dialogs.popup()"/>
+        <Button id="light_fsc.on_top35" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="vlc.onTop()"/>
+        <Button id="light_fsc.eq36" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="eqwin.show()"/>
+        <Button id="light_fsc.video_tracks37" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_video);subtitlewin.show()"/>
+        <Button id="light_fsc.audio_tracks38" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_audio);subtitlewin.show()"/>
+        <Button id="light_fsc.subtitles39" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="subtitlewin.setLayout(light_subtitles);subtitlewin.show()"/>
+        <Button id="light_fsc.toggle_playlist40" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="main.setLayout(light_side)"/>
+        <Button id="light_fsc.load_playlist41" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.load()"/>
+        <Button id="light_fsc.save_playlist42" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="light.px.chrome" over="light.px.chrome" down="light.px.chrome" action="playlist.save()"/>
+      </Panel>
     </Layout>
     <Layout id="dark_fsc" width="1000" height="56" minwidth="1000" maxwidth="1000" minheight="56" maxheight="56">
       <Image id="dark_fsc.bg1" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" image="dark.fsc.bg" action="move"/>
@@ -1068,6 +1208,26 @@
       <Button id="dark_fsc.tgl21" x="858" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.subtitles_active.30x32.3.4.raw.up@chrome.o" over="dark.ib.subtitles_active.30x32.3.4.raw.over@chrome.o" down="dark.ib.subtitles_active.30x32.3.4.raw.down@chrome.o" action="subtitlewin.hide()" tooltiptext="Close subtitles" visible="subtitlewin.isVisible"/>
       <Button id="dark_fsc.btn22" x="900" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.playback_settings.30x32.3.4.up@chrome.o" over="dark.ib.playback_settings.30x32.3.4.over@chrome.o" down="dark.ib.playback_settings.30x32.3.4.down@chrome.o" action="playback_menu.show()" tooltiptext="Playback"/>
       <Button id="dark_fsc.btn23" x="950" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.ib.fullscreen_exit.30x32.3.4.up@chrome.o" over="dark.ib.fullscreen_exit.30x32.3.4.over@chrome.o" down="dark.ib.fullscreen_exit.30x32.3.4.down@chrome.o" action="vlc.fullscreen()" tooltiptext="Leave fullscreen"/>
+      <Panel id="dark_fsc.panel24" x="30000" y="0" lefttop="lefttop" rightbottom="lefttop" width="1" height="18">
+        <Button id="dark_fsc.open_files25" x="0" y="0" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.file()"/>
+        <Button id="dark_fsc.open_folder26" x="0" y="1" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.directory()"/>
+        <Button id="dark_fsc.open_disc27" x="0" y="2" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.disc()"/>
+        <Button id="dark_fsc.open_network28" x="0" y="3" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.net()"/>
+        <Button id="dark_fsc.convert29" x="0" y="4" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.streamingWizard()"/>
+        <Button id="dark_fsc.settings30" x="0" y="5" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.prefs()"/>
+        <Button id="dark_fsc.media_info31" x="0" y="6" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.fileInfo()"/>
+        <Button id="dark_fsc.messages32" x="0" y="7" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.messages()"/>
+        <Button id="dark_fsc.change_skin33" x="0" y="8" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.changeSkin()"/>
+        <Button id="dark_fsc.vlc_menu34" x="0" y="9" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="dialogs.popup()"/>
+        <Button id="dark_fsc.on_top35" x="0" y="10" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="vlc.onTop()"/>
+        <Button id="dark_fsc.eq36" x="0" y="11" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="eqwin.show()"/>
+        <Button id="dark_fsc.video_tracks37" x="0" y="12" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_video);subtitlewin.show()"/>
+        <Button id="dark_fsc.audio_tracks38" x="0" y="13" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_audio);subtitlewin.show()"/>
+        <Button id="dark_fsc.subtitles39" x="0" y="14" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="subtitlewin.setLayout(dark_subtitles);subtitlewin.show()"/>
+        <Button id="dark_fsc.toggle_playlist40" x="0" y="15" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="main.setLayout(dark_side)"/>
+        <Button id="dark_fsc.load_playlist41" x="0" y="16" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.load()"/>
+        <Button id="dark_fsc.save_playlist42" x="0" y="17" lefttop="lefttop" rightbottom="lefttop" up="dark.px.chrome" over="dark.px.chrome" down="dark.px.chrome" action="playlist.save()"/>
+      </Panel>
     </Layout>
   </Window>
 </Theme>

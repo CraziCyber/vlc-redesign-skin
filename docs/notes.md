@@ -42,8 +42,8 @@ show up to ten tracks at a time. The **Audio** tab lists output devices reported
 | Player - Light (2425:13624) | Every layout also comes in light. The "..." menu switches theme, and the equalizer and fullscreen bar follow. |
 | Miniplayer (970:3090) | 391 × 339 mini player: video or cover, progress, title, controls and time. |
 | Audio - Equalizer (6114:13610), Toggle (536:1014) | Equalizer window: preamp and 10 bands with the Figma sliders, plus the ON/OFF toggle. |
-| Player - hide UI (3328:11554) | VLC's fullscreen, with the control bar floating at the bottom when the mouse moves. |
-| menu (6062:13354), right-click menu (6065:13616) | The "..." menu (open, view, theme, settings, quit) and the playback menu behind the settings button. Shortcuts shown are VLC's real hotkeys. |
+| Player - hide UI (3328:11554) | Hide UI slides the title bar up and the controls down inside the player window. Fullscreen remains a separate action. |
+| menu (6062:13354), right-click menu (6065:13616) | The "..." menu opens media, view and settings. The Windows module draws the rounded right-click menu with the original icon sheet and displays configured VLC shortcuts. |
 | Icon set (42:356) | Every icon, cut from the sheet at 1×. |
 
 Screenshots of each are in [screenshots](screenshots).
@@ -54,7 +54,7 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
 
 - **Library views, onboarding, the settings pages, keyboard shortcuts and the open/network
   dialogs** are VLC's Qt windows and keep VLC's look. The skin opens them; it cannot restyle them.
-- **Menus** are native Windows menus: the skin sets their items, not their look.
+- **Skin-defined menus** use native Windows styling. The Windows module supplies the right-click menu and delegates playback and dialog actions to VLC.
 - **Tooltips** are drawn by VLC in fixed colours (pale yellow `#FFFFD0`, black border and text,
   `src/tooltip.cpp`). The skin only picks their font (`tooltipfont`, here Inter 12).
 - **Translucency** fails (see below), so the music view has no blurred backdrop, and the cover

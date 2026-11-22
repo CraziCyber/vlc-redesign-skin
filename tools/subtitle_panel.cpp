@@ -1,11 +1,13 @@
-// Windows interface module for the media tracks panel in VLC 3.0.24.
+// Windows interface module for the VLC Redesign skin in VLC 3.0.24.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define UNICODE
 #include <windows.h>
 #include <commctrl.h>
+#include <windowsx.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cwchar>
 #include <memory>
@@ -15,6 +17,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "context_menu.hpp"
+#include "hidden_controls.hpp"
+#include "player_window.hpp"
 
 // The VLC 3.0 module ABI used here is defined by vlc_common.h, vlc_interface.h,
 // vlc_plugin.h, vlc_variables.h and vlc_aout.h. Keep these declarations local.
@@ -36,6 +42,7 @@ struct VlcInterface {
 struct VlcList;
 union VlcValue {
     std::int64_t integer;
+    bool boolean;
     char *string;
     VlcList *list;
 };
@@ -56,13 +63,16 @@ __declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int aout_DevicesList(AudioOutput *, char ***, char ***);
 __declspec(dllimport) char *aout_DeviceGet(AudioOutput *);
 __declspec(dllimport) int aout_DeviceSet(AudioOutput *, const char *);
-__declspec(dllimport) int var_Get(Input *, const char *, VlcValue *);
-__declspec(dllimport) int var_Set(Input *, const char *, VlcValue);
+__declspec(dllimport) int var_Get(void *, const char *, VlcValue *);
+__declspec(dllimport) int var_Set(void *, const char *, VlcValue);
 __declspec(dllimport) int var_Change(Input *, const char *, int, VlcValue *, VlcValue *);
 __declspec(dllimport) void var_FreeList(VlcValue *, VlcValue *);
 __declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) char *input_item_GetURI(InputItem *);
 __declspec(dllimport) const char *vlc_gettext(const char *);
+__declspec(dllimport) int playlist_Status(Playlist *);
+__declspec(dllimport) char *config_GetPsz(void *, const char *);
+__declspec(dllimport) int vlc_actions_get_id(const char *);
 __declspec(dllimport) LibVlc *libvlc_new(int, const char *const *);
 __declspec(dllimport) void libvlc_release(LibVlc *);
 __declspec(dllimport) void libvlc_free(void *);
@@ -76,6 +86,9 @@ __declspec(dllimport) void libvlc_media_tracks_release(MediaTrack **, unsigned);
 }
 
 namespace {
+std::atomic<VlcInterface *> context_interface{nullptr};
+std::atomic<HWND> context_target{nullptr};
+
 constexpr wchar_t host_class[] = L"VlcRedesignSubtitleTracks";
 constexpr wchar_t no_devices_label[] = L"No output devices available";
 // Match the layout dimensions and section positions in build.py.
@@ -291,15 +304,6 @@ std::optional<RECT> subtitles_button(HWND window) {
         return std::nullopt;
     const LONG top = client.bottom - (fullscreen_controls ? 44 : 43);
     return RECT{client.right - 142, top, client.right - 112, top + 32};
-}
-
-BOOL CALLBACK find_toolbar(HWND window, LPARAM data) {
-    DWORD process = 0;
-    GetWindowThreadProcessId(window, &process);
-    if (process != GetCurrentProcessId() || !subtitles_button(window))
-        return TRUE;
-    *reinterpret_cast<HWND *>(data) = window;
-    return FALSE;
 }
 
 std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height) {
@@ -542,18 +546,30 @@ void CALLBACK preferences_ready(HWND, UINT, UINT_PTR timer, DWORD) {
         finish_preferences_request(window);
 }
 
+void request_preferences(HWND window, LPARAM position) {
+    if (preferences.timer)
+        return;
+    preferences.expires = GetTickCount64() + 5000;
+    preferences.timer = SetTimer(nullptr, 0, 25, preferences_ready);
+    press_skin_button(window, position);
+}
+
 void show_preferences(HWND panel, LPARAM position) {
     if (const HWND window = preferences_window()) {
         close_skin_panel(panel);
         finish_preferences_request(window);
         return;
     }
-    if (!preferences.timer) {
-        preferences.expires = GetTickCount64() + 5000;
-        preferences.timer = SetTimer(nullptr, 0, 25, preferences_ready);
-        press_skin_button(panel, position);
-    }
+    request_preferences(panel, position);
     close_skin_panel(panel);
+}
+
+void open_context_preferences(HWND window, LPARAM position) {
+    if (const HWND dialog = preferences_window()) {
+        finish_preferences_request(dialog);
+    } else {
+        request_preferences(window, position);
+    }
 }
 
 bool over_preferences_button(const MSG &message) {
@@ -591,12 +607,258 @@ UINT dismiss_message() {
     return id;
 }
 
+UINT context_menu_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.OpenContextMenu");
+    return id;
+}
+
+UINT context_key_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.ContextMenuKey");
+    return id;
+}
+
+enum class ContextKey { dismiss, navigate, hide_ui };
+
+bool redesign_is_selected(void *vlc) {
+    std::unique_ptr<char, decltype(&libvlc_free)> skin(config_GetPsz(vlc, "skins2-last"), libvlc_free);
+    if (!skin)
+        return false;
+    const std::string_view path(skin.get());
+    const auto name = path.substr(path.find_last_of("/\\") + 1);
+    return name == "VLC-Redesign.vlt";
+}
+
+bool context_player(HWND window) {
+    if (!is_skin_window(window) || !GetWindow(window, GW_OWNER) || !IsWindowVisible(window) || IsIconic(window))
+        return false;
+    RECT bounds{};
+    return GetClientRect(window, &bounds) &&
+        ((bounds.right == 391 && bounds.bottom == 339) || subtitles_button(window).has_value());
+}
+
+bool fullscreen_surface(HWND window) {
+    RECT bounds{};
+    return is_skin_window(window) && IsWindowVisible(window) && !GetWindow(window, GW_OWNER) &&
+        GetClientRect(window, &bounds) && bounds.right >= 860 && bounds.bottom >= 420;
+}
+
+bool video_window(HWND window) {
+    wchar_t name[64];
+    return GetClassNameW(window, name, 64) && wcsncmp(name, L"VLC video ", 10) == 0;
+}
+
+BOOL CALLBACK find_context_player(HWND window, LPARAM result) {
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    if (process != GetCurrentProcessId() || !context_player(window))
+        return TRUE;
+    RECT bounds{};
+    if (GetClientRect(window, &bounds) && bounds.bottom == 56)
+        return TRUE;
+    *reinterpret_cast<HWND *>(result) = window;
+    return FALSE;
+}
+
+HWND controls_player(HWND window) {
+    RECT bounds{};
+    if (GetClientRect(window, &bounds) && bounds.right == 1000 && bounds.bottom == 56) {
+        const HWND main = context_target.load();
+        return context_player(main) ? main : nullptr;
+    }
+    return window;
+}
+
+int playlist_button(const MSG &message) {
+    RECT bounds{};
+    if (!context_player(message.hwnd) || !GetClientRect(message.hwnd, &bounds) || bounds.bottom < 420)
+        return 0;
+    const POINT position{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+    // The sidebar toggle in top_bar() and the last button in control_bar().
+    const RECT top{89, 6, 117, 34};
+    const RECT bottom{bounds.right - 50, bounds.bottom - 43, bounds.right - 20, bounds.bottom - 11};
+    return PtInRect(&top, position) ? 1 : PtInRect(&bottom, position) ? 2 : 0;
+}
+
+bool handle_playlist_button(const MSG &message) {
+    struct Press { HWND window; int button; };
+    thread_local Press pressed{};
+    if (message.message == WM_LBUTTONDOWN || message.message == WM_LBUTTONDBLCLK) {
+        const int button = playlist_button(message);
+        VlcInterface *interface = context_interface.load();
+        pressed = button && interface && redesign_is_selected(interface->libvlc) ? Press{message.hwnd, button} : Press{};
+    } else if (message.message == WM_LBUTTONUP) {
+        const Press press = std::exchange(pressed, {});
+        if (press.window && press.window == message.hwnd && press.button == playlist_button(message)) {
+            player_window::toggle_playlist(message.hwnd, message.lParam, true);
+            hidden_controls::playlist_layout_changed(message.hwnd);
+            return true;
+        }
+    }
+    return false;
+}
+
+void run_context_action(HWND window, const char *action, context_menu::SkinCommand command) {
+    VlcInterface *interface = context_interface.load();
+    if (!interface || !context_player(window))
+        return;
+    if (action) {
+        const std::string key = std::string("key-") + action;
+        if (const int id = vlc_actions_get_id(key.c_str()))
+            var_Set(interface->libvlc, "key-action", VlcValue{id});
+        return;
+    }
+    using Command = context_menu::SkinCommand;
+    if (command == Command::toggle_ui) {
+        hidden_controls::toggle(controls_player(window));
+        return;
+    }
+    const LPARAM position = MAKELPARAM(static_cast<WORD>(context_menu::command_x), static_cast<WORD>(command));
+    if (command == Command::toggle_playlist) {
+        if (const HWND player = controls_player(window)) {
+            player_window::toggle_playlist(player, position, false);
+            hidden_controls::playlist_layout_changed(player);
+        }
+    } else if (command == Command::settings) {
+        open_context_preferences(window, position);
+    } else if (command != Command::none) {
+        if (command == Command::video_tracks || command == Command::audio_tracks || command == Command::subtitles)
+            anchor_panel_to(window);
+        press_skin_button(window, position);
+    }
+}
+
+bool open_context_menu(HWND window, HWND surface, VlcInterface &interface, POINT location, bool keyboard) {
+    PanelWindow tracks;
+    EnumWindows(find_panel, reinterpret_cast<LPARAM>(&tracks));
+    if (tracks.hwnd)
+        close_skin_panel(tracks.hwnd);
+    InputRef input(playlist_CurrentInput(interface.parent), vlc_object_release);
+    VlcValue recording{};
+    const bool is_recording = input && var_Get(input.get(), "record", &recording) == 0 && recording.boolean;
+    constexpr int playlist_running = 1;  // VLC 3.0's playlist_status_t.
+    return context_menu::show({window, surface, interface.libvlc, playlist_Status(interface.parent) == playlist_running,
+                               bool(input), is_recording, hidden_controls::hidden(controls_player(window)),
+                               run_context_action},
+                              location, keyboard);
+}
+
+bool handle_context_click(const MSG &message) {
+    VlcInterface *interface = context_interface.load();
+    if (!interface)
+        return false;
+    if (message.message == context_menu_message()) {
+        const POINT location{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+        const HWND surface = reinterpret_cast<HWND>(message.wParam);
+        if (context_player(message.hwnd) && redesign_is_selected(interface->libvlc))
+            open_context_menu(message.hwnd, IsWindowVisible(surface) ? surface : message.hwnd, *interface, location, false);
+        return true;
+    }
+    if (message.message == context_key_message()) {
+        const auto key = static_cast<ContextKey>(message.lParam);
+        context_menu::handle_key(message.wParam, key == ContextKey::navigate);
+        if (key == ContextKey::hide_ui)
+            run_context_action(message.hwnd, nullptr, context_menu::SkinCommand::toggle_ui);
+        return true;
+    }
+    const bool keyboard = message.message == WM_KEYDOWN &&
+        (message.wParam == VK_APPS || (message.wParam == VK_F10 && GetKeyState(VK_SHIFT) < 0));
+    if (!keyboard && message.message != WM_RBUTTONDOWN && message.message != WM_RBUTTONUP &&
+        message.message != WM_RBUTTONDBLCLK && message.message != WM_CONTEXTMENU)
+        return false;
+    HWND surface = GetAncestor(message.hwnd, GA_ROOT);
+    if (const HWND player = hidden_controls::player_for_overlay(surface))
+        surface = player;
+    const HWND window = context_player(surface) ? surface : fullscreen_surface(surface) ? context_target.load() : nullptr;
+    if (!context_player(window) || !redesign_is_selected(interface->libvlc))
+        return false;
+    if (message.message == WM_RBUTTONDOWN || message.message == WM_RBUTTONDBLCLK)
+        return true;
+    POINT location{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+    if (keyboard || (message.message == WM_CONTEXTMENU && message.lParam == -1)) {
+        RECT bounds{};
+        GetWindowRect(window, &bounds);
+        location = {bounds.left + 24, bounds.top + 40};
+    } else if (message.message != WM_CONTEXTMENU) {
+        ClientToScreen(message.hwnd, &location);
+    }
+    return open_context_menu(window, surface, *interface, location, keyboard || message.lParam == -1);
+}
+
+bool is_hide_ui_shortcut(const MSG &message) {
+    if (message.message != WM_KEYDOWN || GetKeyState(VK_CONTROL) >= 0 || GetKeyState(VK_MENU) < 0)
+        return false;
+    const SHORT scan = VkKeyScanW(L'\\');
+    return scan != -1 && message.wParam == LOBYTE(scan) &&
+           bool(HIBYTE(scan) & 1) == (GetKeyState(VK_SHIFT) < 0);
+}
+
+bool handle_hide_ui_shortcut(const MSG &message) {
+    if (!is_hide_ui_shortcut(message))
+        return false;
+    VlcInterface *interface = context_interface.load();
+    const HWND window = context_player(message.hwnd) ? message.hwnd :
+        fullscreen_surface(message.hwnd) ? context_target.load() : nullptr;
+    if (!interface || !context_player(window) || !redesign_is_selected(interface->libvlc) ||
+        !context_menu::hide_ui_shortcut_available(interface->libvlc))
+        return false;
+    if (!(message.lParam & (1L << 30)))
+        run_context_action(window, nullptr, context_menu::SkinCommand::toggle_ui);
+    return true;
+}
+
+bool handle_video_context_event(const MSG &message) {
+    const bool keyboard = message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN;
+    const bool right_click = message.message == WM_RBUTTONDOWN || message.message == WM_RBUTTONDBLCLK ||
+                             message.message == WM_RBUTTONUP;
+    if ((!keyboard && !right_click) || !video_window(message.hwnd))
+        return false;
+    const HWND target = context_target.load();
+    VlcInterface *interface = context_interface.load();
+    if (!target || !interface)
+        return false;
+    if (keyboard) {
+        if (is_hide_ui_shortcut(message) && redesign_is_selected(interface->libvlc) &&
+            context_menu::hide_ui_shortcut_available(interface->libvlc)) {
+            return (message.lParam & (1L << 30)) ||
+                PostMessageW(target, context_key_message(), message.wParam, static_cast<LPARAM>(ContextKey::hide_ui));
+        }
+        if (context_menu::is_open()) {
+            const bool navigate = context_menu::is_navigation_key(message.wParam);
+            const auto event = navigate ? ContextKey::navigate : ContextKey::dismiss;
+            const bool queued = PostMessageW(target, context_key_message(), message.wParam, static_cast<LPARAM>(event));
+            return queued && navigate;
+        }
+        return false;
+    }
+    if (!redesign_is_selected(interface->libvlc))
+        return false;
+    if (message.message == WM_RBUTTONUP) {
+        POINT location{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+        ClientToScreen(message.hwnd, &location);
+        const auto surface = reinterpret_cast<WPARAM>(GetAncestor(message.hwnd, GA_ROOT));
+        return PostMessageW(target, context_menu_message(), surface, MAKELPARAM(location.x, location.y));
+    }
+    return true;
+}
+
+LRESULT CALLBACK video_events_from_queue(int code, WPARAM removal, LPARAM data) {
+    if (code == HC_ACTION && removal == PM_REMOVE) {
+        auto &message = *reinterpret_cast<MSG *>(data);
+        if (handle_video_context_event(message))
+            message.message = WM_NULL;
+    }
+    return CallNextHookEx(nullptr, code, removal, data);
+}
+
 LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
     if (code == HC_ACTION && removal == PM_REMOVE) {
         auto &message = *reinterpret_cast<MSG *>(data);
         if (message.message == dismiss_message()) {
             message.message = WM_NULL;
             close_skin_panel(message.hwnd);
+        } else if (context_menu::handle_message(message) || handle_hide_ui_shortcut(message) ||
+                   handle_context_click(message) || handle_playlist_button(message)) {
+            message.message = WM_NULL;
         } else {
             handle_preferences_click(message);
             handle_toolbar_click(message);
@@ -633,6 +895,7 @@ private:
     HINSTANCE module_ = nullptr;
     HHOOK skin_hook_ = nullptr;
     DWORD skin_thread_ = 0;
+    std::vector<std::pair<DWORD, HHOOK>> video_hooks_;
     HWND host_ = nullptr, list_ = nullptr, none_ = nullptr;
     HWND device_list_ = nullptr;
     HFONT font_ = nullptr;
@@ -675,6 +938,7 @@ private:
         cls.lpszClassName = host_class;
         if (!RegisterClassW(&cls))
             return;
+        context_menu::load_artwork(module_);
 
         font_ = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -701,6 +965,10 @@ private:
         }
         if (skin_hook_)
             UnhookWindowsHookEx(skin_hook_);
+        context_target.store(nullptr);
+        for (const auto &hook : video_hooks_)
+            UnhookWindowsHookEx(hook.second);
+        context_menu::unload_artwork();
         if (host_)
             DestroyWindow(host_);
         embedded_.set_input(nullptr);
@@ -727,6 +995,58 @@ private:
             skin_thread_ = owner;
         }
         return skin_hook_ != nullptr;
+    }
+
+    void watch_video_windows() {
+        HWND window = nullptr;
+        if (skin_thread_)
+            EnumThreadWindows(skin_thread_, find_context_player, reinterpret_cast<LPARAM>(&window));
+        context_target.store(window);
+        struct Threads {
+            DWORD process, skin_thread;
+            std::vector<DWORD> ids;
+        } threads{GetCurrentProcessId(), skin_thread_, {}};
+        const auto track_video = [](HWND child, LPARAM data) -> BOOL {
+            auto &threads = *reinterpret_cast<Threads *>(data);
+            DWORD process = 0;
+            const DWORD thread = GetWindowThreadProcessId(child, &process);
+            if (process == threads.process && thread != threads.skin_thread && video_window(child) &&
+                std::find(threads.ids.begin(), threads.ids.end(), thread) == threads.ids.end())
+                threads.ids.push_back(thread);
+            return TRUE;
+        };
+        struct Search {
+            Threads &threads;
+            WNDENUMPROC track;
+        } search{threads, track_video};
+        if (window) {
+            EnumWindows([](HWND top, LPARAM data) -> BOOL {
+                auto &search = *reinterpret_cast<Search *>(data);
+                DWORD process = 0;
+                GetWindowThreadProcessId(top, &process);
+                if (process == search.threads.process && IsWindowVisible(top)) {
+                    const auto flags = reinterpret_cast<LPARAM>(&search.threads);
+                    search.track(top, flags);
+                    EnumChildWindows(top, search.track, flags);
+                }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&search));
+        }
+        for (auto it = video_hooks_.begin(); it != video_hooks_.end();) {
+            if (std::find(threads.ids.begin(), threads.ids.end(), it->first) != threads.ids.end()) {
+                ++it;
+            } else {
+                UnhookWindowsHookEx(it->second);
+                it = video_hooks_.erase(it);
+            }
+        }
+        for (const DWORD id : threads.ids) {
+            const auto attached = std::find_if(video_hooks_.begin(), video_hooks_.end(),
+                                              [id](const auto &hook) { return hook.first == id; });
+            if (attached == video_hooks_.end())
+                if (const HHOOK hook = SetWindowsHookExW(WH_GETMESSAGE, video_events_from_queue, module_, id))
+                    video_hooks_.emplace_back(id, hook);
+        }
     }
 
     void request_dismiss(HWND window) {
@@ -772,10 +1092,11 @@ private:
             watch_skin_thread(window.hwnd);
         else if (!skin_hook_) {
             HWND toolbar = nullptr;
-            EnumWindows(find_toolbar, reinterpret_cast<LPARAM>(&toolbar));
+            EnumWindows(find_context_player, reinterpret_cast<LPARAM>(&toolbar));
             if (toolbar)
                 watch_skin_thread(toolbar);
         }
+        watch_video_windows();
         if (!window.hwnd || !IsWindowVisible(window.hwnd)) {
             if (host_)
                 DestroyWindow(host_);
@@ -1053,13 +1374,21 @@ int open_panel(VlcInterface *interface) {
     if (active_panel || !interface->parent)
         return -1;
     auto panel = std::unique_ptr<Panel>(new (std::nothrow) Panel(interface->parent));
-    if (!panel || !panel->start())
+    if (!panel)
         return -1;
+    if (redesign_is_selected(interface->libvlc))
+        player_window::restore_startup_bounds(interface->libvlc);
+    context_interface.store(interface);
+    if (!panel->start()) {
+        context_interface.store(nullptr);
+        return -1;
+    }
     active_panel = panel.release();
     return 0;
 }
 
 void close_panel(VlcInterface *) {
+    context_interface.store(nullptr);
     delete active_panel;
     active_panel = nullptr;
 }
@@ -1076,7 +1405,7 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
     if (set(data, nullptr, create_module, &module))
         return -1;
     if (set(data, module, name, "subtitlepanel") ||
-        set(data, module, description, "VLC Redesign media track controls") ||
+        set(data, module, description, "VLC Redesign controls and context menu") ||
         set(data, module, capability, "interface") || set(data, module, score, 0) ||
         set(data, module, open_callback, "open_panel", reinterpret_cast<void *>(open_panel)) ||
         set(data, module, close_callback, "close_panel", reinterpret_cast<void *>(close_panel)))

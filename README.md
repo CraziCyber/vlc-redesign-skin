@@ -17,6 +17,8 @@ This installer requires **VLC 3.0.24 (64-bit) on Windows**.
 
 The installer adds the subtitle module to VLC and installs and selects `VLC-Redesign.vlt`. It backs up existing VLC settings before changing them. Run the installer again to update an existing setup.
 
+Right-click the player to open the redesigned menu. Use the arrow keys and Enter to navigate, or press Esc to close it. The menu shows the shortcuts configured in VLC. **Hide UI** slides the player controls away in the current window. Select **Show UI** to slide them back, or use `Ctrl + \` if that combination is unassigned in VLC.
+
 With the skin on, Preferences are under **Settings** in the ••• menu at the top left.
 
 ## What's included

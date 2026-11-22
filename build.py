@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 
 from skinlib import paint as P
+from skinlib.context_menu import add_skin_commands
 from skinlib.palette import DARK, LIGHT, THEMES
 from skinlib.skin import Layout, Skin
 
@@ -442,6 +443,7 @@ def full_layout(skin, win, t, side):
                      f"main.setLayout({lid(t, 'side')})", "Show playlist", anchor=anchor)
     control_bar(L, art, H - 54, W, fixed=False, last=last,
                 bg=lambda x0, y0, x1, y1: P.solid(x1 - x0, y1 - y0, t["chrome"]))
+    add_skin_commands(L, t, art.px("chrome"))
 
     # skins2 windows resize only from the right, the bottom and that corner
     chrome = art.px("chrome")
@@ -484,6 +486,7 @@ def mini_layout(skin, win, t):
     L.button(art.icon_button("lists"), 289, y, f"main.setLayout({lid(t, 'side')})", "Full player with playlist")
     L.button(art.icon_button("window"), 321, y, f"main.setLayout({lid(t, 'full')})", "Full player")
     L.button(art.icon_button("close"), 353, y, "vlc.quit()", "Quit VLC")
+    add_skin_commands(L, t, art.px("chrome"))
     return L
 
 
@@ -615,14 +618,14 @@ def fsc_layout(skin, win, t):
         L.button(art.icon_button("fullscreen_exit", 30, 32, 3, 4), x, y, "vlc.fullscreen()", "Leave fullscreen",
                  anchor=anchor)
     control_bar(L, art, 1, W, fixed=True, last=last, bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)))
+    add_skin_commands(L, t, art.px("chrome"))
     return L
 
 
 # --- menus ----------------------------------------------------------------------
 
 def menus(skin):
-    """The '...' menu (Figma 'menu', 6062:13354) per layout, and the playback menu
-    (Figma 'right-click menu', 6065:13616). Shortcuts shown are VLC's own hotkeys."""
+    """The '...' menu (Figma 'menu', 6062:13354) per layout and the playback button's menu."""
     for t in THEMES:
         o = other(t)
         for kind in ("full", "side", "mini"):

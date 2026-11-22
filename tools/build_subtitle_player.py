@@ -11,11 +11,14 @@ from tempfile import TemporaryDirectory
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build import NAME, build  # noqa: E402
+from skinlib.context_menu import write_resources  # noqa: E402
 
 MODULE = "libsubtitlepanel_plugin.dll"
 CORE_EXPORTS = ("playlist_CurrentInput", "vlc_object_release", "var_Get", "var_Set",
                 "var_Change", "var_FreeList", "input_GetItem", "input_item_GetURI",
-                "playlist_GetAout", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext")
+                "playlist_GetAout", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext",
+                "playlist_Status", "config_GetPsz", "config_PutPsz", "vlc_actions_get_id", "vlc_actions_get_key_names", "vlc_actions_get_keycodes",
+                "vlc_keycode2str", "vlc_str2keycode")
 LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_new_location",
                   "libvlc_media_release", "libvlc_media_parse_with_options",
                   "libvlc_media_get_parsed_status", "libvlc_media_parse_stop",
@@ -25,6 +28,9 @@ LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_n
 def build_module(output, toolchain):
     with TemporaryDirectory() as temporary:
         temp = Path(temporary)
+        resources = temp / "context_menu.o"
+        subprocess.run([toolchain / "windres.exe", "-c", "65001", "-i", write_resources(temp),
+                        "-o", resources, "-O", "coff"], check=True)
         import_libraries = []
         for lib, exports in (("libvlccore", CORE_EXPORTS), ("libvlc", LIBVLC_EXPORTS)):
             definition = temp / f"{lib}.def"
@@ -34,8 +40,10 @@ def build_module(output, toolchain):
                             "--output-lib", import_library], check=True)
             import_libraries.append(import_library)
         subprocess.run([toolchain / "g++.exe", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
-                        "-shared", "-static", "-o", output, ROOT / "tools/subtitle_panel.cpp",
-                        *import_libraries, "-lgdi32", "-luser32", "-lcomctl32"], check=True)
+                        "-shared", "-static", "-I", temp, "-o", output, ROOT / "tools/subtitle_panel.cpp",
+                        ROOT / "tools/context_menu.cpp", ROOT / "tools/hidden_controls.cpp",
+                        ROOT / "tools/player_window.cpp", resources,
+                        *import_libraries, "-lgdiplus", "-lgdi32", "-luser32", "-lcomctl32", "-ldwmapi"], check=True)
 
 
 def prepare_player(vlc, output, toolchain):
