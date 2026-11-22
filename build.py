@@ -4,7 +4,7 @@
     python build.py
 
 Writes dist/VLC-Redesign/ (theme.xml, img/, fonts/) and dist/VLC-Redesign.vlt.
-Run dist/Installer-VLC-Undertekster.cmd to install the subtitle module and select this skin.
+Run dist/Install-VLC-Subtitles.cmd to install the subtitle module and select this skin.
 
 docs/notes.md explains what of the Figma design is in the skin and what skins2 cannot do.
 

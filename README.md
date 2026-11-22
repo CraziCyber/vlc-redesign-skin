@@ -12,7 +12,7 @@ A skin for VLC 3 based on Juxtopposed's redesign of VLC.
 This installer requires **VLC 3.0.24 (64-bit) on Windows**.
 
 1. Clone this branch and close VLC completely.
-2. Open `dist/Installer-VLC-Undertekster.cmd` from the cloned folder. Approve the administrator prompt if Windows displays it.
+2. Open `dist/Install-VLC-Subtitles.cmd` from the cloned folder. Approve the administrator prompt if Windows displays it.
 3. Open VLC from your usual shortcut and play a file. The **Subtitles** button opens the panel. Use **Video**, **Audio** and **Subtitles** to select embedded tracks, or choose an output device under **Audio**. The video and subtitle lists show up to ten tracks at a time and scroll to the rest.
 
 The installer adds the subtitle module to VLC and installs and selects `VLC-Redesign.vlt`. It backs up existing VLC settings before changing them. Run the installer again to update an existing setup.

@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 function Assert-CompatibleVlc([string] $Executable) {
     $program = Get-Item -LiteralPath $Executable
     if ($program.VersionInfo.FileVersion -notmatch '^3\.0\.24(?:\.0)?$') {
-        throw 'Installasjonen krever VLC 3.0.24 for 64-biters Windows.'
+        throw 'The installer requires VLC 3.0.24 for 64-bit Windows.'
     }
 
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($program.FullName))
@@ -18,7 +18,7 @@ function Assert-CompatibleVlc([string] $Executable) {
         $reader.BaseStream.Position = 0x3c
         $reader.BaseStream.Position = $reader.ReadUInt32()
         if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
-            throw 'Velg 64-bitersutgaven av VLC 3.0.24.'
+            throw 'Use the 64-bit version of VLC 3.0.24.'
         }
     } finally {
         $reader.Dispose()
@@ -27,7 +27,7 @@ function Assert-CompatibleVlc([string] $Executable) {
 
 function Assert-VlcClosed {
     if (Get-Process -Name 'vlc' -ErrorAction SilentlyContinue) {
-        throw 'Lukk VLC helt og start installasjonen igjen.'
+        throw 'Close VLC completely, then run the installer again.'
     }
 }
 
@@ -120,7 +120,7 @@ try {
     $modulePath = Join-Path $VlcDirectory "plugins\gui\$moduleName"
     foreach ($payload in @($moduleSource, $skinSource)) {
         if (!(Test-Path -LiteralPath $payload -PathType Leaf)) {
-            throw 'Pakk ut hele ZIP-filen og start installasjonen derfra.'
+            throw 'Keep the installer scripts, DLL, and skin in the same folder. If you downloaded a ZIP archive, extract it first.'
         }
     }
 
@@ -136,11 +136,11 @@ try {
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath),
                        '-VlcDirectory', ('"{0}"' -f $VlcDirectory), '-ModuleOnly')
         $elevation = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru -Wait
-        if ($elevation.ExitCode -ne 0) { throw 'Windows kunne ikke installere VLC-modulen.' }
+        if ($elevation.ExitCode -ne 0) { throw 'Windows could not install the VLC module.' }
     }
 
     if ((Get-FileDigest $moduleSource) -ne (Get-FileDigest $modulePath)) {
-        throw 'VLC-modulen samsvarer ikke med filen i installasjonspakken.'
+        throw 'The installed VLC module does not match the installer package.'
     }
     Assert-VlcClosed
     $skinDirectory = Join-Path $SettingsDirectory 'skins'
@@ -148,7 +148,7 @@ try {
     $skinPath = Join-Path $skinDirectory $skinName
     Copy-PackageFile $skinSource $skinPath
     Enable-LiveSubtitles (Join-Path $SettingsDirectory 'vlcrc') $skinPath
-    [Console]::WriteLine('Ferdig. Start VLC med den vanlige snarveien.')
+    [Console]::WriteLine('Installation complete. Start VLC from your usual shortcut.')
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
