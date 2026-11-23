@@ -8,9 +8,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cwchar>
+#include <list>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <string_view>
@@ -18,26 +22,53 @@
 #include <utility>
 #include <vector>
 
+#include "add_subtitles.hpp"
 #include "context_menu.hpp"
 #include "hidden_controls.hpp"
 #include "player_window.hpp"
+#include "subtitle_drop.hpp"
 
 // The VLC 3.0 module ABI used here is defined by vlc_common.h, vlc_interface.h,
-// vlc_plugin.h, vlc_variables.h and vlc_aout.h. Keep these declarations local.
+// vlc_plugin.h, vlc_variables.h, vlc_playlist.h and vlc_aout.h.
 struct Playlist;
 struct Input;
 struct InputItem;
 struct AudioOutput;
 struct LibVlc;
 struct Media;
-struct VlcInterface {
+template<class Parent>
+struct VlcObject {
     const char *object_type;
     char *header;
     int flags;
     bool forced;
     void *libvlc;
-    Playlist *parent;
+    Parent *parent;
 };
+using VlcInterface = VlcObject<Playlist>;
+
+struct PlaylistItem {
+    InputItem *input;
+    PlaylistItem **children, *parent;
+    int child_count;
+    unsigned played;
+    int id;
+    std::uint8_t flags;
+};
+
+struct PlaylistItems {
+    int capacity, count;
+    PlaylistItem **items;
+};
+
+struct Playlist {
+    VlcObject<void> object;
+    PlaylistItems items, current;
+    int current_index;
+    PlaylistItem root;
+    PlaylistItem *playing;
+};
+static_assert(offsetof(Playlist, playing) == 120, "VLC 3.0.24 64-bit playlist layout");
 
 struct VlcList;
 union VlcValue {
@@ -58,17 +89,26 @@ struct MediaTrack {
 
 extern "C" {
 __declspec(dllimport) Input *playlist_CurrentInput(Playlist *);
+__declspec(dllimport) int input_Control(Input *, int, ...);
+__declspec(dllimport) void playlist_Lock(Playlist *);
+__declspec(dllimport) void playlist_Unlock(Playlist *);
 __declspec(dllimport) AudioOutput *playlist_GetAout(Playlist *);
 __declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int aout_DevicesList(AudioOutput *, char ***, char ***);
 __declspec(dllimport) char *aout_DeviceGet(AudioOutput *);
 __declspec(dllimport) int aout_DeviceSet(AudioOutput *, const char *);
+__declspec(dllimport) int var_Create(void *, const char *, int);
+__declspec(dllimport) void var_Destroy(void *, const char *);
 __declspec(dllimport) int var_Get(void *, const char *, VlcValue *);
 __declspec(dllimport) int var_Set(void *, const char *, VlcValue);
 __declspec(dllimport) int var_Change(Input *, const char *, int, VlcValue *, VlcValue *);
 __declspec(dllimport) void var_FreeList(VlcValue *, VlcValue *);
 __declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) char *input_item_GetURI(InputItem *);
+__declspec(dllimport) char *input_item_GetTitleFbName(InputItem *);
+__declspec(dllimport) char *input_item_GetMeta(InputItem *, int);
+__declspec(dllimport) char *vlc_uri2path(const char *);
+__declspec(dllimport) char *vlc_path2uri(const char *, const char *);
 __declspec(dllimport) const char *vlc_gettext(const char *);
 __declspec(dllimport) int playlist_Status(Playlist *);
 __declspec(dllimport) char *config_GetPsz(void *, const char *);
@@ -86,27 +126,49 @@ __declspec(dllimport) void libvlc_media_tracks_release(MediaTrack **, unsigned);
 }
 
 namespace {
+struct LocalSubtitle {
+    std::string uri;
+    std::wstring name;
+};
+using SubtitleRequest = std::shared_ptr<const LocalSubtitle>;
+
 std::atomic<VlcInterface *> context_interface{nullptr};
 std::atomic<HWND> context_target{nullptr};
+std::mutex local_subtitles_mutex;
+std::map<std::string, SubtitleRequest> local_subtitles;
+std::atomic_bool has_local_subtitles{false};
 
 constexpr wchar_t host_class[] = L"VlcRedesignSubtitleTracks";
 constexpr wchar_t no_devices_label[] = L"No output devices available";
 // Match the layout dimensions and section positions in build.py.
 constexpr int panel_width = 368, video_height = 481, audio_height = 504, subtitles_height = 480;
+constexpr int equalizer_width = 400, equalizer_height = 496;
+constexpr LONG equalizer_offset = -42;
 constexpr int list_x = 26, list_y = 96, list_width = panel_width - 52;
 constexpr int row_height = 24, visible_tracks = 10, audio_rows = 4;
 constexpr int devices_y = 280, device_rows = 6, refresh_y = 241, refresh_size = 32;
 constexpr int preferences_margin = 18, preferences_height = 32;
+constexpr int subtitle_body_height = subtitles_height - list_y - preferences_margin - preferences_height;
+constexpr int external_header_height = 38, min_embedded_rows = 4;
 constexpr LONG popup_right_margin = 16, popup_gap = 20;
 constexpr int none_control = 1, track_control = 2, device_control = 3, refresh_control = 4;
+constexpr int external_control = 5, add_control = 6;
 constexpr DWORD dismiss_poll_ms = 15, dismiss_delay_ms = 50;
 constexpr int get_choices = 0x24;
 constexpr int no_track = -1;
+constexpr int playing = 2, paused = 3;  // input_state_e in VLC 3.0.24.
+constexpr char subtitle_description[] = "sub-description";
 constexpr COLORREF dark_panel = RGB(15, 15, 15), light_panel = RGB(194, 193, 193);
 constexpr COLORREF accent = RGB(211, 121, 24);
 
 using InputRef = std::unique_ptr<Input, decltype(&vlc_object_release)>;
 using AudioOutputRef = std::unique_ptr<AudioOutput, decltype(&vlc_object_release)>;
+
+struct DroppedSubtitles {
+    InputRef input;
+    std::list<SubtitleRequest> files;
+};
+std::optional<DroppedSubtitles> dropped_subtitles;  // Guarded by local_subtitles_mutex.
 
 enum class Page { audio = 0, video = 1, subtitles = 2 };  // libvlc_track_type_t
 
@@ -277,6 +339,15 @@ std::optional<Page> panel_page(HWND window) {
     }
 }
 
+COLORREF panel_background(HWND window) {
+    const HDC dc = GetDC(window);
+    if (!dc)
+        return CLR_INVALID;
+    const COLORREF color = GetPixel(dc, 6, list_y - 4);
+    ReleaseDC(window, dc);
+    return color;
+}
+
 BOOL CALLBACK find_panel(HWND window, LPARAM data) {
     DWORD pid = 0;
     GetWindowThreadProcessId(window, &pid);
@@ -293,33 +364,68 @@ BOOL CALLBACK find_panel(HWND window, LPARAM data) {
     return !visible;
 }
 
+bool fullscreen_surface(HWND window) {
+    RECT bounds{};
+    return is_skin_window(window) && IsWindowVisible(window) && !GetWindow(window, GW_OWNER) &&
+        GetClientRect(window, &bounds) && bounds.right >= 860 && bounds.bottom >= 420;
+}
+
+bool fullscreen_toolbar(HWND window) {
+    RECT bounds{};
+    return is_skin_window(window) && GetClientRect(window, &bounds) && bounds.right == 1000 && bounds.bottom == 56;
+}
+
+HWND fullscreen_owner(HWND toolbar) {
+    if (fullscreen_toolbar(toolbar)) {
+        const HWND owner = GetWindow(toolbar, GW_OWNER);
+        if (fullscreen_surface(owner))
+            return owner;
+    }
+    return nullptr;
+}
+
+HWND toolbar_for_fullscreen(HWND surface) {
+    if (fullscreen_owner(surface))
+        return surface;
+    if (!fullscreen_surface(surface))
+        return nullptr;
+    struct Lookup { HWND surface, toolbar; } lookup{surface, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL {
+        auto &lookup = *reinterpret_cast<Lookup *>(data);
+        if (GetWindow(window, GW_OWNER) != lookup.surface || !fullscreen_toolbar(window))
+            return TRUE;
+        lookup.toolbar = window;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&lookup));
+    return lookup.toolbar;
+}
+
 std::optional<RECT> subtitles_button(HWND window) {
     RECT client;
-    if (!is_skin_window(window) || !IsWindowVisible(window) || IsIconic(window) ||
-        !GetClientRect(window, &client))
+    if (!is_skin_window(window) || IsIconic(window) || !GetClientRect(window, &client))
         return std::nullopt;
     // The main player and fullscreen controller share control_bar() in build.py.
     const bool fullscreen_controls = client.right == 1000 && client.bottom == 56;
-    if (!fullscreen_controls && (client.right < 860 || client.bottom < 420))
+    if (!fullscreen_controls && (!IsWindowVisible(window) || client.right < 860 || client.bottom < 420))
         return std::nullopt;
     const LONG top = client.bottom - (fullscreen_controls ? 44 : 43);
     return RECT{client.right - 142, top, client.right - 112, top + 32};
 }
 
-std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height) {
+std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height, LONG offset = 0) {
     const auto button = subtitles_button(toolbar);
     POINT origin{};
     if (!button || !ClientToScreen(toolbar, &origin))
         return std::nullopt;
 
-    POINT position{origin.x + button->right + 112 - popup_right_margin - width,
+    POINT position{origin.x + button->right + 112 - popup_right_margin - width + offset,
                    origin.y + button->top - popup_gap - height};
-    const POINT button_center{origin.x + (button->left + button->right) / 2,
+    const POINT button_center{origin.x + (button->left + button->right) / 2 + offset,
                               origin.y + (button->top + button->bottom) / 2};
     MONITORINFO monitor{};
     monitor.cbSize = sizeof(monitor);
     if (GetMonitorInfoW(MonitorFromPoint(button_center, MONITOR_DEFAULTTONEAREST), &monitor)) {
-        const RECT &work = monitor.rcWork;
+        const RECT &work = fullscreen_owner(toolbar) ? monitor.rcMonitor : monitor.rcWork;
         const LONG below = origin.y + button->bottom + popup_gap;
         if (position.y < work.top && below + height <= work.bottom)
             position.y = below;
@@ -332,7 +438,6 @@ std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height) {
 struct PanelAnchor {
     HWND toolbar = nullptr;
     HWND panel = nullptr;
-    HWND pressed_toolbar = nullptr;
 };
 
 // Position changes and mouse messages are handled on the skin's UI thread.
@@ -429,23 +534,130 @@ void anchor_panel_to(HWND toolbar) {
     if (anchor.panel) {
         move_anchored_panel();
     } else {
-        EnumThreadWindows(GetCurrentThreadId(), attach_popup_candidate,
-                          reinterpret_cast<LPARAM>(GetWindow(toolbar, GW_OWNER)));
+        // The fullscreen controller belongs to the video surface. The skin panels
+        // still belong to the same owner as the windowed player.
+        const HWND player = fullscreen_owner(toolbar) ? context_target.load() : toolbar;
+        if (const HWND owner = GetWindow(player, GW_OWNER))
+            EnumThreadWindows(GetCurrentThreadId(), attach_popup_candidate, reinterpret_cast<LPARAM>(owner));
     }
 }
+
+enum class ToolbarPopup : WPARAM { none, tracks, equalizer };
+
+bool equalizer_panel(HWND window) {
+    RECT bounds{};
+    return is_skin_window(window) && GetClientRect(window, &bounds) &&
+        bounds.right == equalizer_width && bounds.bottom == equalizer_height;
+}
+
+struct FullscreenPopup {
+    HWND window = nullptr;
+    POINT previous_position{};
+    bool was_topmost = false;
+};
+
+thread_local FullscreenPopup fullscreen_tracks, fullscreen_equalizer;
+
+void restore_fullscreen_popup(FullscreenPopup &popup, bool tracks) {
+    const auto saved = std::exchange(popup, {});
+    if (GetWindowThreadProcessId(saved.window, nullptr) != GetCurrentThreadId() ||
+        !(tracks ? panel_page(saved.window).has_value() : equalizer_panel(saved.window)))
+        return;
+
+    POINT position = saved.previous_position;
+    if (tracks) {
+        RECT bounds{};
+        const HWND toolbar = context_target.load();
+        if (GetClientRect(saved.window, &bounds))
+            position = panel_position(toolbar, bounds.right, bounds.bottom).value_or(position);
+        RemoveWindowSubclass(anchor.toolbar, follow_toolbar, anchor_subclass);
+        anchor.toolbar = toolbar;
+        if (toolbar)
+            SetWindowSubclass(toolbar, follow_toolbar, anchor_subclass, 0);
+    }
+    SetWindowPos(saved.window, saved.was_topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 position.x, position.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS);
+    InvalidateRect(saved.window, nullptr, FALSE);
+}
+
+LRESULT CALLBACK follow_fullscreen(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR) {
+    if (message == WM_NCDESTROY || (message == WM_WINDOWPOSCHANGED &&
+        (reinterpret_cast<const WINDOWPOS *>(lparam)->flags & SWP_HIDEWINDOW))) {
+        RemoveWindowSubclass(window, follow_fullscreen, id);
+        restore_fullscreen_popup(fullscreen_tracks, true);
+        restore_fullscreen_popup(fullscreen_equalizer, false);
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+
+void raise_fullscreen_popup(HWND toolbar, ToolbarPopup kind) {
+    const HWND surface = fullscreen_owner(toolbar);
+    if (!surface || (kind != ToolbarPopup::tracks && kind != ToolbarPopup::equalizer))
+        return;
+    const bool tracks = kind == ToolbarPopup::tracks;
+    struct Lookup { bool tracks; HWND window; } lookup{tracks, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL {
+        auto &lookup = *reinterpret_cast<Lookup *>(data);
+        if (!IsWindowVisible(window) || !(lookup.tracks ? panel_page(window).has_value() : equalizer_panel(window)))
+            return TRUE;
+        lookup.window = window;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&lookup));
+
+    RECT bounds{};
+    if (!lookup.window || !GetWindowRect(lookup.window, &bounds) ||
+        !SetWindowSubclass(surface, follow_fullscreen, 1, 0))
+        return;
+    auto &saved = tracks ? fullscreen_tracks : fullscreen_equalizer;
+    if (saved.window != lookup.window) {
+        const auto styles = GetWindowLongPtrW(lookup.window, GWL_EXSTYLE);
+        saved = {lookup.window, {bounds.left, bounds.top}, (styles & WS_EX_TOPMOST) != 0};
+    }
+    const auto position = panel_position(toolbar, bounds.right - bounds.left, bounds.bottom - bounds.top,
+                                         tracks ? 0 : equalizer_offset).value_or(POINT{bounds.left, bounds.top});
+    // Raise the panel above VLC's topmost fullscreen video without taking focus.
+    SetWindowPos(lookup.window, HWND_TOPMOST, position.x, position.y, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS);
+    InvalidateRect(lookup.window, nullptr, FALSE);
+}
+
+UINT fullscreen_popup_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.RaiseFullscreenPopup");
+    return id;
+}
+
+bool redesign_is_selected(void *vlc);
 
 void handle_toolbar_click(const MSG &message) {
     if (message.message != WM_LBUTTONDOWN && message.message != WM_LBUTTONDBLCLK && message.message != WM_LBUTTONUP)
         return;
-    const POINT cursor{static_cast<short>(LOWORD(message.lParam)), static_cast<short>(HIWORD(message.lParam))};
-    const auto button = subtitles_button(message.hwnd);
-    const bool hit = button && PtInRect(&*button, cursor);
+    struct Press { HWND toolbar; ToolbarPopup popup; };
+    thread_local Press pressed{};
+    const POINT cursor{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+    ToolbarPopup popup = ToolbarPopup::none;
+    const HWND fullscreen = fullscreen_owner(message.hwnd);
+    if (auto button = subtitles_button(message.hwnd)) {
+        if (PtInRect(&*button, cursor)) {
+            popup = ToolbarPopup::tracks;
+        } else if (fullscreen) {
+            OffsetRect(&*button, equalizer_offset, 0);
+            if (PtInRect(&*button, cursor))
+                popup = ToolbarPopup::equalizer;
+        }
+    }
     if (message.message == WM_LBUTTONUP) {
-        const HWND pressed = std::exchange(anchor.pressed_toolbar, nullptr);
-        if (hit && pressed == message.hwnd)
-            anchor_panel_to(message.hwnd);
+        const auto press = std::exchange(pressed, {});
+        if (press.toolbar == message.hwnd && press.popup == popup && popup != ToolbarPopup::none) {
+            if (popup == ToolbarPopup::tracks)
+                anchor_panel_to(message.hwnd);
+            if (fullscreen) {
+                const auto interface = context_interface.load();
+                if (interface && redesign_is_selected(interface->libvlc))
+                    PostMessageW(message.hwnd, fullscreen_popup_message(), static_cast<WPARAM>(popup), 0);
+            }
+        }
     } else {
-        anchor.pressed_toolbar = hit ? message.hwnd : nullptr;
+        pressed = {message.hwnd, popup};
     }
 }
 
@@ -636,15 +848,14 @@ bool context_player(HWND window) {
         ((bounds.right == 391 && bounds.bottom == 339) || subtitles_button(window).has_value());
 }
 
-bool fullscreen_surface(HWND window) {
-    RECT bounds{};
-    return is_skin_window(window) && IsWindowVisible(window) && !GetWindow(window, GW_OWNER) &&
-        GetClientRect(window, &bounds) && bounds.right >= 860 && bounds.bottom >= 420;
-}
-
 bool video_window(HWND window) {
     wchar_t name[64];
     return GetClassNameW(window, name, 64) && wcsncmp(name, L"VLC video ", 10) == 0;
+}
+
+bool subtitle_drop_window(HWND window) {
+    return context_player(window) || fullscreen_surface(window) || fullscreen_owner(window) ||
+        panel_page(window) == Page::subtitles;
 }
 
 BOOL CALLBACK find_context_player(HWND window, LPARAM result) {
@@ -660,12 +871,216 @@ BOOL CALLBACK find_context_player(HWND window, LPARAM result) {
 }
 
 HWND controls_player(HWND window) {
-    RECT bounds{};
-    if (GetClientRect(window, &bounds) && bounds.right == 1000 && bounds.bottom == 56) {
+    if (fullscreen_toolbar(window)) {
         const HWND main = context_target.load();
         return context_player(main) ? main : nullptr;
     }
     return window;
+}
+
+HWND add_subtitles_owner() {
+    if (const HWND fullscreen = fullscreen_owner(anchor.toolbar))
+        return fullscreen;
+    const HWND player = controls_player(anchor.toolbar);
+    return context_player(player) ? player : context_target.load();
+}
+
+UINT add_subtitles_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.AddSubtitles");
+    return id;
+}
+
+UINT show_saved_subtitles_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.ShowSavedSubtitles");
+    return id;
+}
+
+std::wstring local_media_path(const char *uri) {
+    using Text = std::unique_ptr<char, decltype(&libvlc_free)>;
+    const Text path(uri && std::string_view(uri).substr(0, 7) == "file://" ? vlc_uri2path(uri) : nullptr, libvlc_free);
+    return from_utf8(path.get());
+}
+
+std::string to_utf8(std::wstring_view text) {
+    const int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
+                                          static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (!length)
+        return {};
+    std::string utf8(length, '\0');
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
+                             utf8.data(), length, nullptr, nullptr))
+        return {};
+    return utf8;
+}
+
+std::string file_uri(std::wstring_view path) {
+    const auto utf8 = to_utf8(path);
+    if (utf8.empty())
+        return {};
+    const std::unique_ptr<char, decltype(&libvlc_free)> uri(vlc_path2uri(utf8.c_str(), nullptr), libvlc_free);
+    return uri ? uri.get() : std::string{};
+}
+
+std::string local_media_key(Input *input) {
+    auto *item = input ? input_GetItem(input) : nullptr;
+    if (!item)
+        return {};
+    const std::unique_ptr<char, decltype(&libvlc_free)> uri(input_item_GetURI(item), libvlc_free);
+    if (!uri)
+        return {};
+    const auto path = local_media_path(uri.get());
+    return path.empty() ? uri.get() : file_uri(path);
+}
+
+SubtitleRequest local_subtitle(std::wstring_view path, std::wstring_view label = {}) {
+    auto uri = file_uri(path);
+    if (uri.empty())
+        return {};
+    auto name = label;
+    if (name.empty()) {
+        name = path.substr(path.find_last_of(L"/\\") + 1);
+        if (const auto extension = name.find_last_of(L'.'); extension != 0)
+            name = name.substr(0, extension);
+    }
+    return std::make_shared<LocalSubtitle>(LocalSubtitle{std::move(uri), std::wstring(name)});
+}
+
+bool active_playback(Input *input) {
+    VlcValue state{};
+    return input && var_Get(input, "state", &state) == 0 && (state.integer == playing || state.integer == paused);
+}
+
+InputRef drop_input() {
+    const auto interface = context_interface.load();
+    if (!interface || !redesign_is_selected(interface->libvlc))
+        return InputRef(nullptr, vlc_object_release);
+    return InputRef(playlist_CurrentInput(interface->parent), vlc_object_release);
+}
+
+bool can_drop_subtitles() {
+    return active_playback(drop_input().get());
+}
+
+bool queue_dropped_subtitles(const std::vector<std::wstring> &paths) {
+    auto input = drop_input();
+    if (paths.empty() || !active_playback(input.get()))
+        return false;
+    auto media = local_media_key(input.get());
+    if (media.empty())
+        return false;
+
+    std::list<SubtitleRequest> files;
+    for (const auto &path : paths) {
+        auto request = local_subtitle(path);
+        if (!request)
+            return false;
+        files.push_back(std::move(request));
+    }
+    const std::lock_guard<std::mutex> lock(local_subtitles_mutex);
+    local_subtitles.insert_or_assign(std::move(media), files.back());
+    if (!dropped_subtitles || dropped_subtitles->input.get() != input.get())
+        dropped_subtitles.emplace(DroppedSubtitles{std::move(input), {}});
+    dropped_subtitles->files.splice(dropped_subtitles->files.end(), files);
+    has_local_subtitles.store(true);
+    return true;
+}
+
+bool save_local_subtitles(const std::vector<add_subtitles::LocalAttachment> &attachments, bool show_tracks) {
+    if (attachments.empty())
+        return false;
+    std::map<std::string, SubtitleRequest> updates;
+    for (const auto &attachment : attachments) {
+        auto media = attachment.media.path.empty() ? attachment.media.uri : file_uri(attachment.media.path);
+        auto subtitle = local_subtitle(attachment.subtitle, attachment.label);
+        if (media.empty() || !subtitle)
+            return false;
+        updates.insert_or_assign(std::move(media), std::move(subtitle));
+    }
+    {
+        const std::lock_guard<std::mutex> lock(local_subtitles_mutex);
+        for (const auto &update : updates)
+            local_subtitles.erase(update.first);
+        local_subtitles.merge(updates);
+    }
+    has_local_subtitles.store(true);
+    if (show_tracks) {
+        if (const HWND toolbar = anchor.toolbar ? anchor.toolbar : context_target.load())
+            PostMessageW(toolbar, show_saved_subtitles_message(), 0, 0);
+    }
+    return true;
+}
+
+add_subtitles::Media current_subtitle_media() {
+    const auto interface = context_interface.load();
+    InputRef input(interface ? playlist_CurrentInput(interface->parent) : nullptr, vlc_object_release);
+    const auto item = input ? input_GetItem(input.get()) : nullptr;
+    if (!item)
+        return {};
+
+    using Text = std::unique_ptr<char, decltype(&libvlc_free)>;
+    const Text uri(input_item_GetURI(item), libvlc_free);
+    auto local_path = local_media_path(uri.get());
+    const std::string source = uri ? uri.get() : "";
+    if (!local_path.empty()) {
+        const auto filename = local_path.substr(local_path.find_last_of(L"/\\") + 1);
+        const auto extension = filename.find_last_of(L'.');
+        return {std::move(local_path), filename.substr(0, extension == 0 ? std::wstring::npos : extension), source};
+    }
+    const Text title(input_item_GetTitleFbName(item), libvlc_free);
+    auto display = from_utf8(title.get());
+    if (display.find(L"://") != std::wstring::npos)
+        display.clear();
+    return {{}, std::move(display), source};
+}
+
+std::vector<add_subtitles::Media> current_playlist_tracks() {
+    const auto interface = context_interface.load();
+    Playlist *playlist = interface ? interface->parent : nullptr;
+    if (!playlist)
+        return {};
+
+    playlist_Lock(playlist);
+    const std::unique_ptr<Playlist, decltype(&playlist_Unlock)> locked(playlist, playlist_Unlock);
+    std::vector<add_subtitles::Media> tracks;
+    std::vector<const PlaylistItem *> remaining{playlist->playing};
+    while (!remaining.empty()) {
+        const auto *item = remaining.back();
+        remaining.pop_back();
+        if (!item)
+            continue;
+        if (item->child_count >= 0) {
+            for (int i = item->child_count; i > 0; --i)
+                remaining.push_back(item->children[i - 1]);
+            continue;
+        }
+        if (!item->input)
+            continue;
+
+        using Text = std::unique_ptr<char, decltype(&libvlc_free)>;
+        constexpr int artist_metadata = 1;  // vlc_meta_Artist in vlc_meta.h.
+        const Text title(input_item_GetTitleFbName(item->input), libvlc_free);
+        const Text artist(input_item_GetMeta(item->input, artist_metadata), libvlc_free);
+        auto label = from_utf8(title.get());
+        const auto name = from_utf8(artist.get());
+        if (label.empty())
+            label = L"Untitled track";
+        if (!name.empty() && name != label)
+            label += L" \u2014 " + name;
+        const Text uri(input_item_GetURI(item->input), libvlc_free);
+        tracks.push_back({local_media_path(uri.get()), std::move(label), uri ? uri.get() : ""});
+    }
+    return tracks;
+}
+
+void open_add_subtitles(HWND panel) {
+    const auto interface = context_interface.load();
+    if (!interface || !redesign_is_selected(interface->libvlc) || !IsWindowVisible(panel) ||
+        panel_page(panel) != Page::subtitles)
+        return;
+    const HWND player = add_subtitles_owner();
+    const bool light_theme = panel_background(panel) == light_panel;
+    close_skin_panel(panel);
+    add_subtitles::show(player, light_theme, current_subtitle_media, current_playlist_tracks, save_local_subtitles);
 }
 
 int playlist_button(const MSG &message) {
@@ -697,7 +1112,7 @@ bool handle_playlist_button(const MSG &message) {
     return false;
 }
 
-void run_context_action(HWND window, const char *action, context_menu::SkinCommand command) {
+void run_context_action(HWND window, HWND surface, const char *action, context_menu::SkinCommand command) {
     VlcInterface *interface = context_interface.load();
     if (!interface || !context_player(window))
         return;
@@ -721,9 +1136,14 @@ void run_context_action(HWND window, const char *action, context_menu::SkinComma
     } else if (command == Command::settings) {
         open_context_preferences(window, position);
     } else if (command != Command::none) {
-        if (command == Command::video_tracks || command == Command::audio_tracks || command == Command::subtitles)
-            anchor_panel_to(window);
+        const bool tracks = command == Command::video_tracks || command == Command::audio_tracks || command == Command::subtitles;
+        const bool equalizer = command == Command::eq;
+        const HWND toolbar = (tracks || equalizer) ? toolbar_for_fullscreen(surface) : nullptr;
+        if (tracks)
+            anchor_panel_to(toolbar ? toolbar : window);
         press_skin_button(window, position);
+        if (toolbar)
+            raise_fullscreen_popup(toolbar, tracks ? ToolbarPopup::tracks : ToolbarPopup::equalizer);
     }
 }
 
@@ -757,7 +1177,7 @@ bool handle_context_click(const MSG &message) {
         const auto key = static_cast<ContextKey>(message.lParam);
         context_menu::handle_key(message.wParam, key == ContextKey::navigate);
         if (key == ContextKey::hide_ui)
-            run_context_action(message.hwnd, nullptr, context_menu::SkinCommand::toggle_ui);
+            run_context_action(message.hwnd, message.hwnd, nullptr, context_menu::SkinCommand::toggle_ui);
         return true;
     }
     const bool keyboard = message.message == WM_KEYDOWN &&
@@ -802,7 +1222,7 @@ bool handle_hide_ui_shortcut(const MSG &message) {
         !context_menu::hide_ui_shortcut_available(interface->libvlc))
         return false;
     if (!(message.lParam & (1L << 30)))
-        run_context_action(window, nullptr, context_menu::SkinCommand::toggle_ui);
+        run_context_action(window, window, nullptr, context_menu::SkinCommand::toggle_ui);
     return true;
 }
 
@@ -853,11 +1273,28 @@ LRESULT CALLBACK video_events_from_queue(int code, WPARAM removal, LPARAM data) 
 LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
     if (code == HC_ACTION && removal == PM_REMOVE) {
         auto &message = *reinterpret_cast<MSG *>(data);
-        if (message.message == dismiss_message()) {
+        if (message.message == fullscreen_popup_message()) {
+            message.message = WM_NULL;
+            raise_fullscreen_popup(message.hwnd, static_cast<ToolbarPopup>(message.wParam));
+        } else if (message.message == dismiss_message()) {
             message.message = WM_NULL;
             close_skin_panel(message.hwnd);
-        } else if (context_menu::handle_message(message) || handle_hide_ui_shortcut(message) ||
-                   handle_context_click(message) || handle_playlist_button(message)) {
+        } else if (message.message == add_subtitles_message()) {
+            message.message = WM_NULL;
+            open_add_subtitles(message.hwnd);
+        } else if (message.message == show_saved_subtitles_message()) {
+            message.message = WM_NULL;
+            const auto interface = context_interface.load();
+            if (interface && redesign_is_selected(interface->libvlc) && !IsWindowVisible(anchor.panel))
+                run_context_action(context_target.load(), message.hwnd, nullptr, context_menu::SkinCommand::subtitles);
+        } else if (message.message == subtitle_drop::install_message()) {
+            message.message = WM_NULL;
+            const auto interface = context_interface.load();
+            if (interface && redesign_is_selected(interface->libvlc) && subtitle_drop_window(message.hwnd))
+                subtitle_drop::install(message.hwnd, can_drop_subtitles, queue_dropped_subtitles);
+        } else if (add_subtitles::handle_key(message) || context_menu::handle_message(message) ||
+                   handle_hide_ui_shortcut(message) || handle_context_click(message) ||
+                   handle_playlist_button(message)) {
             message.message = WM_NULL;
         } else {
             handle_preferences_click(message);
@@ -890,6 +1327,18 @@ public:
     }
 
 private:
+    struct LoadedSubtitle {
+        SubtitleRequest file;
+        Track track;
+    };
+
+    struct PendingSubtitle {
+        SubtitleRequest file;
+        std::vector<Track> previous_tracks;
+        std::unique_ptr<char, decltype(&libvlc_free)> previous_description;
+        ULONGLONG deadline;
+    };
+
     Playlist *playlist_;
     HANDLE stop_ = nullptr, thread_ = nullptr;
     HINSTANCE module_ = nullptr;
@@ -897,12 +1346,18 @@ private:
     DWORD skin_thread_ = 0;
     std::vector<std::pair<DWORD, HHOOK>> video_hooks_;
     HWND host_ = nullptr, list_ = nullptr, none_ = nullptr;
-    HWND device_list_ = nullptr;
+    HWND device_list_ = nullptr, external_list_ = nullptr, add_button_ = nullptr;
     HFONT font_ = nullptr;
     Page page_ = Page::subtitles;
     InputRef input_{nullptr, vlc_object_release};
+    InputRef local_input_{nullptr, vlc_object_release};
+    std::string local_media_key_;
+    SubtitleRequest attempted_local_subtitle_;
+    std::optional<PendingSubtitle> pending_local_subtitle_;
+    std::vector<LoadedSubtitle> loaded_local_subtitles_;
     EmbeddedTracks embedded_;
-    std::vector<Track> tracks_;
+    std::vector<Track> tracks_, external_tracks_;
+    int embedded_rows_ = min_embedded_rows;
     std::int64_t selected_track_ = no_track;
     std::vector<AudioDevice> devices_;
     std::string selected_device_;
@@ -920,7 +1375,17 @@ private:
     }
 
     int track_rows() const {
-        return page_ == Page::audio ? audio_rows : visible_tracks;
+        if (page_ == Page::audio)
+            return audio_rows;
+        return page_ == Page::subtitles ? embedded_rows_ : visible_tracks;
+    }
+
+    int external_header_y() const {
+        return (embedded_rows_ + 1) * row_height + 4;
+    }
+
+    int external_rows() const {
+        return (subtitle_body_height - external_header_y() - external_header_height) / row_height;
     }
 
     static DWORD WINAPI run_thread(void *data) {
@@ -971,6 +1436,11 @@ private:
         context_menu::unload_artwork();
         if (host_)
             DestroyWindow(host_);
+        clear_pending_subtitle();
+        {
+            const std::lock_guard<std::mutex> lock(local_subtitles_mutex);
+            dropped_subtitles.reset();
+        }
         embedded_.set_input(nullptr);
         if (font_)
             DeleteObject(font_);
@@ -1023,8 +1493,10 @@ private:
             EnumWindows([](HWND top, LPARAM data) -> BOOL {
                 auto &search = *reinterpret_cast<Search *>(data);
                 DWORD process = 0;
-                GetWindowThreadProcessId(top, &process);
+                const auto thread = GetWindowThreadProcessId(top, &process);
                 if (process == search.threads.process && IsWindowVisible(top)) {
+                    if (thread == search.threads.skin_thread && subtitle_drop_window(top))
+                        subtitle_drop::request(top);
                     const auto flags = reinterpret_cast<LPARAM>(&search.threads);
                     search.track(top, flags);
                     EnumChildWindows(top, search.track, flags);
@@ -1086,6 +1558,7 @@ private:
     }
 
     void refresh() {
+        refresh_local_subtitle();
         PanelWindow window;
         EnumWindows(find_panel, reinterpret_cast<LPARAM>(&window));
         if (window.hwnd)
@@ -1104,6 +1577,7 @@ private:
                 embedded_.set_input(nullptr);
             input_.reset();
             tracks_.clear();
+            external_tracks_.clear();
             devices_.clear();
             return;
         }
@@ -1111,25 +1585,23 @@ private:
             DestroyWindow(host_);
         page_ = window.page;
 
-        const HDC dc = GetDC(window.hwnd);
-        if (dc) {
-            const COLORREF color = GetPixel(dc, 6, list_y);
-            ReleaseDC(window.hwnd, dc);
-            if ((color == light_panel || color == dark_panel) && color != background_) {
-                background_ = color;
-                if (host_)
-                    RedrawWindow(host_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
-            }
+        const COLORREF color = panel_background(window.hwnd);
+        if ((color == light_panel || color == dark_panel) && color != background_) {
+            background_ = color;
+            if (host_)
+                RedrawWindow(host_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
         }
 
         const bool new_host = !host_;
         if (new_host) {
             const bool audio = page_ == Page::audio;
-            const int width = audio ? panel_width - list_x - 18 : list_width;
-            const int height = audio ? devices_y - list_y + device_rows * row_height
-                                     : row_height * (visible_tracks + 1);
+            const bool subtitles = page_ == Page::subtitles;
+            const int x = subtitles ? 0 : list_x;
+            const int width = subtitles ? panel_width : audio ? panel_width - list_x - 18 : list_width;
+            const int height = subtitles ? subtitle_body_height : audio ? devices_y - list_y + device_rows * row_height
+                                                                       : row_height * (visible_tracks + 1);
             if (!CreateWindowExW(WS_EX_NOPARENTNOTIFY, host_class, L"Media Tracks",
-                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, list_x, list_y,
+                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, x, list_y,
                                  width, height, window.hwnd, nullptr, module_, this))
                 return;
         }
@@ -1139,9 +1611,129 @@ private:
             refresh_devices(new_host);
     }
 
+    void clear_pending_subtitle() {
+        if (!pending_local_subtitle_)
+            return;
+        VlcValue description{};
+        description.string = pending_local_subtitle_->previous_description.get();
+        if (description.string)
+            var_Set(local_input_.get(), subtitle_description, description);
+        var_Destroy(local_input_.get(), subtitle_description);
+        pending_local_subtitle_.reset();
+    }
+
+    void finish_loading_subtitle(const std::vector<Track> &tracks) {
+        const auto &pending = *pending_local_subtitle_;
+        const auto &name = pending.file->name;
+        const auto language_prefix = name + L" - [";
+        const auto added = std::find_if(tracks.begin(), tracks.end(), [&](const Track &track) {
+            return (track.label == name || track.label.compare(0, language_prefix.size(), language_prefix) == 0) &&
+                std::none_of(pending.previous_tracks.begin(), pending.previous_tracks.end(),
+                             [&](const Track &previous) { return previous.id == track.id; });
+        });
+        if (added != tracks.end()) {
+            auto label = added->label;
+            if (label != name)
+                label.erase(name.size(), 2);
+            loaded_local_subtitles_.push_back({pending.file, {added->id, std::move(label)}});
+            clear_pending_subtitle();
+        } else if (GetTickCount64() >= pending.deadline) {
+            clear_pending_subtitle();
+        }
+    }
+
+    void mark_subtitle_requested(const SubtitleRequest &subtitle, bool dropped) {
+        attempted_local_subtitle_ = subtitle;
+        if (!dropped)
+            return;
+        const std::lock_guard<std::mutex> lock(local_subtitles_mutex);
+        if (dropped_subtitles && dropped_subtitles->files.front() == subtitle) {
+            dropped_subtitles->files.pop_front();
+            if (dropped_subtitles->files.empty())
+                dropped_subtitles.reset();
+        }
+    }
+
+    void refresh_local_subtitle() {
+        if (!has_local_subtitles.load())
+            return;
+        InputRef current(playlist_CurrentInput(playlist_), vlc_object_release);
+        if (current.get() != local_input_.get()) {
+            clear_pending_subtitle();
+            local_input_ = std::move(current);
+            local_media_key_ = local_media_key(local_input_.get());
+            attempted_local_subtitle_.reset();
+            loaded_local_subtitles_.clear();
+        }
+
+        SubtitleRequest subtitle;
+        bool dropped = false;
+        {
+            const std::lock_guard<std::mutex> lock(local_subtitles_mutex);
+            if (dropped_subtitles && dropped_subtitles->input.get() != local_input_.get()) {
+                // A drop can arrive while the worker is switching to the next input.
+                const InputRef live(playlist_CurrentInput(playlist_), vlc_object_release);
+                if (live.get() != local_input_.get())
+                    return;
+                dropped_subtitles.reset();
+            }
+            if (dropped_subtitles) {
+                dropped = true;
+                subtitle = dropped_subtitles->files.front();
+            } else if (const auto chosen = local_subtitles.find(local_media_key_); chosen != local_subtitles.end()) {
+                subtitle = chosen->second;
+            }
+        }
+        if (!subtitle || (!pending_local_subtitle_ && !dropped && subtitle == attempted_local_subtitle_))
+            return;
+
+        auto tracks = media_tracks(local_input_.get(), "spu-es");
+        if (pending_local_subtitle_) {
+            finish_loading_subtitle(tracks);
+            if (pending_local_subtitle_ || (!dropped && subtitle == attempted_local_subtitle_))
+                return;
+        }
+
+        const auto loaded = std::find_if(loaded_local_subtitles_.begin(), loaded_local_subtitles_.end(),
+                                         [&](const LoadedSubtitle &entry) { return entry.file->uri == subtitle->uri; });
+        if (loaded != loaded_local_subtitles_.end()) {
+            const auto id = loaded->track.id;
+            if (std::any_of(tracks.begin(), tracks.end(), [&](const Track &track) { return track.id == id; })) {
+                if (var_Set(local_input_.get(), "spu-es", VlcValue{id}) == 0)
+                    mark_subtitle_requested(subtitle, dropped);
+                return;
+            }
+            loaded_local_subtitles_.erase(loaded);
+        }
+
+        // Wait until VLC finishes loading the media and its automatic subtitle files.
+        if (!active_playback(local_input_.get()))
+            return;
+
+        // The text subtitle demuxer inherits this description. It lets the next
+        // refresh associate the new VLC track ID with the chosen file.
+        constexpr int string_variable = 0x40;
+        auto name = to_utf8(subtitle->name);
+        if (name.empty() || var_Create(local_input_.get(), subtitle_description, string_variable))
+            return;
+        VlcValue previous{}, description{};
+        var_Get(local_input_.get(), subtitle_description, &previous);
+        pending_local_subtitle_.emplace(PendingSubtitle{
+            subtitle, std::move(tracks), {previous.string, libvlc_free}, GetTickCount64() + 10000});
+        description.string = name.data();
+        // INPUT_ADD_SLAVE and SLAVE_TYPE_SPU in VLC 3.0.24.
+        constexpr int add_subtitle = 0x24, subtitle_type = 0;
+        if (var_Set(local_input_.get(), subtitle_description, description) ||
+            input_Control(local_input_.get(), add_subtitle, subtitle_type, subtitle->uri.c_str(), true, dropped, true)) {
+            clear_pending_subtitle();
+        } else {
+            mark_subtitle_requested(subtitle, dropped);
+        }
+    }
+
     template <typename Item, typename Id>
-    static void update_list(HWND list, const std::vector<Item> &items, const Id &selected,
-                            bool reload, LRESULT top, int rows, const wchar_t *empty_label = nullptr) {
+    void update_list(HWND list, const std::vector<Item> &items, const Id &selected,
+                     bool reload, LRESULT top, int rows, const wchar_t *empty_label = nullptr) {
         SendMessageW(list, WM_SETREDRAW, FALSE, 0);
         if (reload) {
             SendMessageW(list, LB_RESETCONTENT, 0, 0);
@@ -1155,9 +1747,20 @@ private:
         const auto index = active == items.end() ? -1 : active - items.begin();
         SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(index), 0);
         const auto last_top = std::max<LRESULT>(0, static_cast<LRESULT>(items.size()) - rows);
+        if (list == external_list_ && index >= 0)
+            top = std::clamp<LRESULT>(top, index - rows + 1, index);
         SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(std::clamp<LRESULT>(top, 0, last_top)), 0);
         SendMessageW(list, WM_SETREDRAW, TRUE, 0);
         InvalidateRect(list, nullptr, TRUE);
+    }
+
+    void layout_subtitle_tracks() {
+        MoveWindow(list_, list_x, row_height, list_width, embedded_rows_ * row_height, TRUE);
+        const int divider = external_header_y();
+        MoveWindow(add_button_, panel_width - 52, divider + 4, 32, 32, TRUE);
+        MoveWindow(external_list_, list_x, divider + external_header_height,
+                   list_width, external_rows() * row_height, TRUE);
+        InvalidateRect(host_, nullptr, FALSE);
     }
 
     void refresh_tracks(bool new_host) {
@@ -1168,18 +1771,47 @@ private:
         const char *variable = track_variable();
         auto entries = media_tracks(current.get(), variable);
         EnableWindow(none_, !entries.empty());
+        std::vector<Track> external;
+        if (page_ == Page::subtitles && current.get() == local_input_.get()) {
+            entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const Track &track) {
+                const auto loaded = std::find_if(loaded_local_subtitles_.begin(), loaded_local_subtitles_.end(),
+                    [&](const LoadedSubtitle &entry) { return entry.track.id == track.id; });
+                if (loaded == loaded_local_subtitles_.end())
+                    return false;
+                external.push_back(loaded->track);
+                return true;
+            }), entries.end());
+        }
         embedded_.filter(entries, page_);
         VlcValue selection{no_track};
         if (current)
             var_Get(current.get(), variable, &selection);
 
-        const bool reload = new_host || new_input || entries != tracks_;
-        if (reload || selected_track_ != selection.integer) {
-            const auto top = new_host || new_input ? 0 : SendMessageW(list_, LB_GETTOPINDEX, 0, 0);
+        const bool reset = new_host || new_input;
+        const bool selection_changed = selected_track_ != selection.integer;
+        const bool reload = reset || entries != tracks_;
+        const bool reload_external = external_list_ && (reset || external != external_tracks_);
+        selected_track_ = selection.integer;
+
+        bool layout_changed = false;
+        if (external_list_) {
+            const auto rows = std::clamp(static_cast<int>(entries.size()), min_embedded_rows, visible_tracks);
+            layout_changed = new_host || rows != embedded_rows_;
+            if (layout_changed) {
+                embedded_rows_ = rows;
+                layout_subtitle_tracks();
+            }
+        }
+        if (reload || selection_changed) {
+            const auto top = reset ? 0 : SendMessageW(list_, LB_GETTOPINDEX, 0, 0);
             tracks_ = std::move(entries);
-            selected_track_ = selection.integer;
             update_list(list_, tracks_, selected_track_, reload, top, track_rows());
             InvalidateRect(none_, nullptr, TRUE);
+        }
+        if (external_list_ && (reload_external || selection_changed || layout_changed)) {
+            const auto top = reset ? 0 : SendMessageW(external_list_, LB_GETTOPINDEX, 0, 0);
+            external_tracks_ = std::move(external);
+            update_list(external_list_, external_tracks_, selected_track_, reload_external, top, external_rows());
         }
         input_ = std::move(current);
     }
@@ -1226,10 +1858,13 @@ private:
         if (item.CtlID == none_control) {
             label = L"None";
             active = selected_track_ == no_track;
-        } else if (item.CtlID == track_control && item.itemID < tracks_.size()) {
-            const auto &track = tracks_[item.itemID];
-            label = track.label.c_str();
-            active = track.id == selected_track_;
+        } else if (item.CtlID == track_control || item.CtlID == external_control) {
+            const auto &tracks = item.CtlID == track_control ? tracks_ : external_tracks_;
+            if (item.itemID < tracks.size()) {
+                const auto &track = tracks[item.itemID];
+                label = track.label.c_str();
+                active = track.id == selected_track_;
+            }
         } else if (item.CtlID == device_control && item.itemID < devices_.size()) {
             const auto &device = devices_[item.itemID];
             label = device.label.c_str();
@@ -1284,8 +1919,45 @@ private:
         FillRect(item.hDC, &item.rcItem, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         if (item.CtlID == refresh_control)
             draw_refresh(item, tone);
+        else if (item.CtlID == add_control)
+            draw_add_subtitles(item);
         else
             draw_row(item, tone);
+    }
+
+    COLORREF subtitle_header_color() const {
+        return background_ == light_panel ? RGB(54, 54, 54) : RGB(143, 143, 143);
+    }
+
+    void draw_add_subtitles(const DRAWITEMSTRUCT &item) const {
+        const LONG x = (item.rcItem.left + item.rcItem.right) / 2;
+        const LONG y = (item.rcItem.top + item.rcItem.bottom) / 2;
+        const RECT horizontal{x - 7, y - 1, x + 8, y + 1};
+        const RECT vertical{x - 1, y - 7, x + 1, y + 8};
+        const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+        SetDCBrushColor(item.hDC, item.itemState & ODS_SELECTED ? accent : subtitle_header_color());
+        FillRect(item.hDC, &horizontal, brush);
+        FillRect(item.hDC, &vertical, brush);
+    }
+
+    void paint_subtitle_body(HWND window) const {
+        PAINTSTRUCT paint{};
+        const HDC dc = BeginPaint(window, &paint);
+        const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+        SetDCBrushColor(dc, background_);
+        FillRect(dc, &paint.rcPaint, brush);
+        const auto y = external_header_y();
+        const RECT divider{0, y, panel_width, y + 1};
+        SetDCBrushColor(dc, background_ == light_panel ? RGB(162, 162, 162) : RGB(38, 38, 38));
+        FillRect(dc, &divider, brush);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, subtitle_header_color());
+        const auto previous = font_ ? SelectObject(dc, font_) : nullptr;
+        RECT header{list_x, y + 4, panel_width - 52, y + 36};
+        DrawTextW(dc, L"External Tracks", -1, &header, DT_SINGLELINE | DT_VCENTER);
+        if (previous)
+            SelectObject(dc, previous);
+        EndPaint(window, &paint);
     }
 
     HWND make_button(int control, const wchar_t *label, int x, int y, int w, int h, DWORD extra_style = 0) {
@@ -1295,39 +1967,50 @@ private:
                                module_, nullptr);
     }
 
-    HWND make_list(int control, int y, int rows) {
+    HWND make_list(int control, int x, int y, int rows) {
         return CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE |
                                WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_OWNERDRAWFIXED |
                                LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
-                               0, y, list_width, rows * row_height, host_,
+                               x, y, list_width, rows * row_height, host_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(control)), module_, nullptr);
     }
 
     bool create_controls(HWND hwnd) {
         host_ = hwnd;
-        none_ = make_button(none_control, L"None", 0, 0, list_width, row_height, WS_DISABLED);
-        list_ = make_list(track_control, row_height, track_rows());
+        const int x = page_ == Page::subtitles ? list_x : 0;
+        none_ = make_button(none_control, L"None", x, 0, list_width, row_height, WS_DISABLED);
+        list_ = make_list(track_control, x, row_height, track_rows());
         if (!none_ || !list_)
             return false;
+        if (page_ == Page::subtitles) {
+            const auto y = external_header_y();
+            add_button_ = make_button(add_control, L"Add Subtitles", panel_width - 52, y + 4, 32, 32);
+            external_list_ = make_list(external_control, x, y + external_header_height, external_rows());
+            return add_button_ && external_list_;
+        }
         if (page_ != Page::audio)
             return true;
 
         const int refresh_x = panel_width - 52 - list_x;
         const auto refresh_button = make_button(refresh_control, L"Refresh output devices",
                                                 refresh_x, refresh_y - list_y, refresh_size, refresh_size);
-        device_list_ = make_list(device_control, devices_y - list_y, device_rows);
+        device_list_ = make_list(device_control, 0, devices_y - list_y, device_rows);
         return refresh_button && device_list_;
     }
 
     void control_changed(WORD control, WORD notification) {
         if (control == none_control && notification == BN_CLICKED) {
             select_track(no_track);
+        } else if (control == add_control && notification == BN_CLICKED) {
+            PostMessageW(GetParent(host_), add_subtitles_message(), 0, 0);
         } else if (control == refresh_control && notification == BN_CLICKED) {
             refresh_devices(true);
-        } else if (control == track_control && notification == LBN_SELCHANGE) {
-            const auto index = SendMessageW(list_, LB_GETCURSEL, 0, 0);
-            if (index >= 0 && static_cast<size_t>(index) < tracks_.size())
-                select_track(tracks_[index].id);
+        } else if ((control == track_control || control == external_control) && notification == LBN_SELCHANGE) {
+            const HWND list = control == track_control ? list_ : external_list_;
+            const auto &tracks = control == track_control ? tracks_ : external_tracks_;
+            const auto index = SendMessageW(list, LB_GETCURSEL, 0, 0);
+            if (index >= 0 && static_cast<size_t>(index) < tracks.size())
+                select_track(tracks[index].id);
         } else if (control == device_control && notification == LBN_SELCHANGE) {
             const auto index = SendMessageW(device_list_, LB_GETCURSEL, 0, 0);
             if (index >= 0 && static_cast<size_t>(index) < devices_.size())
@@ -1347,6 +2030,12 @@ private:
         switch (msg) {
         case WM_CREATE:
             return panel->create_controls(hwnd) ? 0 : -1;
+        case WM_PAINT:
+            if (panel->page_ == Page::subtitles) {
+                panel->paint_subtitle_body(hwnd);
+                return 0;
+            }
+            break;
         case WM_MEASUREITEM:
             reinterpret_cast<MEASUREITEMSTRUCT *>(lp)->itemHeight = row_height;
             return TRUE;
@@ -1362,6 +2051,7 @@ private:
         case WM_DESTROY:
             panel->host_ = nullptr;
             panel->list_ = panel->none_ = panel->device_list_ = nullptr;
+            panel->add_button_ = panel->external_list_ = nullptr;
             break;
         }
         return DefWindowProcW(hwnd, msg, wp, lp);

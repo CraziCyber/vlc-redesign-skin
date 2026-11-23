@@ -555,7 +555,7 @@ def tracks_layout(skin, win, t, page):
     W, H = 368, {"video": 481, "audio": 504, "subtitles": 480}[page]
     L = Layout(skin, win, lid(t, page), W, H)
     art = Art(skin, t)
-    body_top, divider_y = 46, 228 if page == "audio" else 370
+    body_top = 46
     tab_w = 104
     tabs = {
         "video": (20, 14, 42, "video_active"),
@@ -567,10 +567,10 @@ def tracks_layout(skin, win, t, page):
     bg.paste(P.solid(W, body_top, t["track"]), (0, 0))
     bg.paste(P.solid(tab_w, 2, t["accent"]), (tabs[page][0], body_top - 2))
     P.text(bg, 26, 80, "Embedded Tracks", 14, t["text"])
-    secondary = {"audio": "Output Device", "subtitles": "External Tracks"}.get(page)
-    if secondary:
+    if page == "audio":
+        divider_y = 228
         bg.paste(P.solid(W, 1, t["divider"]), (0, divider_y))
-        P.text(bg, 26, divider_y + 34, secondary, 14, t["text"])
+        P.text(bg, 26, divider_y + 34, "Output Device", 14, t["text"])
     # Trim the faint resampling fringe from the VLC window outline.
     bg.putalpha(bg.getchannel("A").point(lambda coverage: coverage if coverage >= 128 else 0))
     L.image(art.get(f"{page}.bg", bg, on="track"), 0, 0, hint="bg")
@@ -586,10 +586,6 @@ def tracks_layout(skin, win, t, page):
                                   original_colors=use_active_icon)
         action = "subtitlewin.hide()" if active else f"subtitlewin.setLayout({lid(t, tab_page)})"
         L.button(tab, tab_x, 7, action, "Close panel" if active else f"Show {label}")
-
-    if page == "subtitles":
-        L.button(art.icon_button("add", 32, 32, 4, 4, on="panel"), W - 52, divider_y + 13,
-                 "dialogs.popup()", "Open VLC's Subtitle menu to add a file")
 
     prefs_w, prefs_h = W - 36, 32
 

@@ -14,7 +14,7 @@ struct Player {
     bool has_input;
     bool recording;
     bool ui_hidden;
-    void (*run)(HWND, const char *, SkinCommand);
+    void (*run)(HWND window, HWND surface, const char *, SkinCommand);
 };
 
 void load_artwork(HINSTANCE module);

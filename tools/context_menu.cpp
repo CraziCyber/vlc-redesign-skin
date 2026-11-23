@@ -553,7 +553,7 @@ struct Menu {
             return;
         }
         dismiss();
-        player.run(player.window, item.action, item.command);
+        player.run(player.window, player.surface, item.action, item.command);
     }
 
     void mouse(UINT message, POINT point) {

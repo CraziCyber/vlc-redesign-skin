@@ -17,6 +17,28 @@ This installer requires **VLC 3.0.24 (64-bit) on Windows**.
 
 The installer adds the subtitle module to VLC and installs and selects `VLC-Redesign.vlt`. It backs up existing VLC settings before changing them. Run the installer again to update an existing setup.
 
+### Search and download from OpenSubtitles
+
+Play a video, open **Subtitles → External Tracks → +**, and select **From OpenSubtitles**. The search field starts with the video filename without its extension. Press Enter or click the magnifying glass to search for an edited title. The language defaults to English.
+
+On first use, create an API key in your OpenSubtitles.com account. Paste it into the masked field in VLC and select **Save API Key**. VLC stores it in Windows Credential Manager for your Windows account. [OpenSubtitles API Consumers](https://www.opensubtitles.com/en/consumers)
+
+For **To This File**, each subtitle filename appears on its own line. Hover over a truncated name to read it in full. Use **Load More** to see additional results. Select a result and choose **Save** to download and activate it under **External Tracks**.
+
+For **To This Folder**, each video from the current video's folder appears alongside its suggested OpenSubtitles match. For a series, the default query shows the season and the search matches each episode by its number. Click the subtitle side of a row, or select the row and press Enter, to cycle through available matches. Scroll to see any remaining files. **Save** adds the chosen matches for the folder, starting with the video that is playing. If the download allowance runs out, VLC adds the subtitles it already fetched and shows how many were added.
+
+Downloaded `.srt` files are cached in `%LOCALAPPDATA%\VLC Redesign\OpenSubtitles` so VLC can reuse them. The selected tracks are applied for the current VLC session.
+
+**To This Playlist** displays the VLC playlist in order, with track titles and available artist names. Its source menu offers **From Computer** and **From Link ...**.
+
+### Add local subtitle files
+
+**From Computer** suggests matching `.srt` files near the media, including the `Subs` and `Subtitles` subfolders. Exact names appear first. Choose **Browse...** to pick any `.srt` in the Windows file picker. For a folder or playlist, select the media row before browsing and click its subtitle to cycle through suggestions.
+
+After **Open**, the selected file appears in the list. Choose **Save** to apply the selections during the current VLC session and return to **External Tracks**. Click an added track to use it. The checkmark follows the active subtitle track. VLC uses the subtitle from its original location.
+
+You can also drag `.srt` files from File Explorer onto the player during playback. The files appear under **External Tracks**, with a checkmark beside the active subtitle.
+
 Right-click the player to open the redesigned menu. Use the arrow keys and Enter to navigate, or press Esc to close it. The menu shows the shortcuts configured in VLC. **Hide UI** slides the player controls away in the current window. Select **Show UI** to slide them back, or use `Ctrl + \` if that combination is unassigned in VLC.
 
 With the skin on, Preferences are under **Settings** in the ••• menu at the top left.
