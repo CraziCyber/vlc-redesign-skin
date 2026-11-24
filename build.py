@@ -648,21 +648,25 @@ def preferences_sidebar(L, art, *, windowed):
                       "Tab", font_size, t[color], align="center")
 
     tabs = art.states("preferences.tab", draw_tab, tuple((color,) for color in tab_colors), frame)
-    label = "Subtitles"
-    icon_slot = 24 + 8
-    icon_x = (tab_width - icon_slot - P.text_width(label, font_size)) // 2
 
-    def subtitles_tab(icon, *, highlighted=False):
+    def labelled_tab(label, icon, *, highlighted=False):
+        icon_slot = 24 + 8
+        icon_x = (tab_width - icon_slot - P.text_width(label, font_size)) // 2
         return art.labelled_button(f"preferences.tab.{icon}", icon, label, tab_width, tab_height,
                                    icon_x, 20, icon_x + icon_slot, baseline, font_size, frame,
                                    colors=tab_colors, original_colors=highlighted)
 
+    labelled_tabs = {
+        1: ("Subtitles", "subtitles", "subtitles_outline_active"),
+        2: ("Audio", "audio", "audio_two_tone"),
+    }
     for number in range(1, PREFERENCES_TABS + 1):
         x = left + (PREFERENCES_TABS - number) * tab_width
         page = lid(t, f"preferences{number}")
         action, selected = f"preferenceswin.setLayout({page})", f"{page}.isActive"
-        if number == 1:
-            L.toggle(selected, subtitles_tab("subtitles"), subtitles_tab("subtitles_outline_active", highlighted=True),
+        if number in labelled_tabs:
+            label, icon, active_icon = labelled_tabs[number]
+            L.toggle(selected, labelled_tab(label, icon), labelled_tab(label, active_icon, highlighted=True),
                      action, action, label, label, x=x, y=PREFERENCES_TAB_TOP, hint="preferencesTab")
         else:
             L.button(tabs, x, PREFERENCES_TAB_TOP, action, f"Tab {number}", hint="preferencesTab")
