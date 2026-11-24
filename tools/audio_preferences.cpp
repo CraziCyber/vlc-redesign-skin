@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <locale>
+#include <sstream>
 #include <string_view>
 
 struct Equalizer;
@@ -79,18 +81,59 @@ void set_float(AudioOutput *output, const char *key, float value) {
     var_Set(output, key, data);
 }
 
+float gain(float value, float fallback) {
+    return std::isfinite(value) ? std::clamp(value, float(equalizer_min_db), float(equalizer_max_db)) : fallback;
 }
 
-Settings read(VlcPlayer player) {
+void write_gains(VlcPlayer player, AudioOutput *output, const EqualizerGains &gains) {
+    std::ostringstream bands;
+    bands.imbue(std::locale::classic());
+    for (std::size_t i = 1; i < gains.size(); ++i) {
+        if (i > 1)
+            bands << ' ';
+        bands << gains[i];
+    }
+    const auto values = bands.str();
+    config_PutPsz(player.vlc, bands_key, values.c_str());
+    config_PutFloat(player.vlc, preamp_key, gains[0]);
+    set_string(output, bands_key, values);
+    set_float(output, preamp_key, gains[0]);
+}
+
+}
+
+Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
     const auto input = audio_input(player);
     VlcValue delay{}, pitch{}, two_pass{};
     const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
     const auto chain = string_option(player, output.get(), filter_key);
+    const auto key = string_option(player, output.get(), preset_key);
+    const auto preset = std::find_if(presets.begin(), presets.end(), [&](const Preset &entry) { return entry.key == key; });
+    auto gains = preset == presets.end() ? EqualizerGains{12.0f} : preset->gains;
+    VlcValue preamp{};
+    gains[0] = gain(output && var_Get(output.get(), preamp_key, &preamp) == 0
+                   ? preamp.real : config_GetFloat(player.vlc, preamp_key), gains[0]);
+    std::istringstream bands(string_option(player, output.get(), bands_key));
+    bands.imbue(std::locale::classic());
+    for (std::size_t i = 1; i < gains.size(); ++i) {
+        float value = 0;
+        if (!(bands >> value))
+            break;
+        gains[i] = gain(value, gains[i]);
+    }
+    std::string selection;
+    if (contains_filter(chain, equalizer)) {
+        const bool matches = preset != presets.end() &&
+            std::equal(gains.begin(), gains.end(), preset->gains.begin(),
+                       [](float a, float b) { return std::abs(a - b) < 0.005f; });
+        selection = matches ? key : "custom";
+    }
     return {
         input && var_Get(input.get(), delay_key, &delay) == 0
             ? std::optional<double>(delay.integer / ticks_per_second) : std::nullopt,
         static_cast<int>(config_GetInt(player.vlc, stereo_key)),
-        contains_filter(chain, equalizer) ? string_option(player, output.get(), preset_key) : "",
+        std::move(selection),
+        gains,
         output && var_Get(output.get(), two_pass_key, &two_pass) == 0
             ? two_pass.boolean : config_GetInt(player.vlc, two_pass_key) != 0,
         contains_filter(chain, filters[0]), contains_filter(chain, filters[1]), contains_filter(chain, filters[2]),
@@ -108,8 +151,18 @@ std::vector<Preset> equalizer_presets(VlcPlayer player) {
     for (std::ptrdiff_t i = 0; i < count; ++i) {
         const auto value = vlc_config::take_string(values[i]);
         const auto label = vlc_config::take_string(labels[i]);
-        if (!value.empty())
-            presets.push_back({value, label.empty() ? value : label, index++});
+        if (value.empty())
+            continue;
+        const std::unique_ptr<Equalizer, decltype(&libvlc_audio_equalizer_release)>
+            settings(libvlc_audio_equalizer_new_from_preset(index++), libvlc_audio_equalizer_release);
+        if (!settings)
+            continue;
+        EqualizerGains gains{};
+        gains[0] = libvlc_audio_equalizer_get_preamp(settings.get());
+        const auto count = std::min<std::size_t>(libvlc_audio_equalizer_get_band_count(), gains.size() - 1);
+        for (unsigned band = 0; band < count; ++band)
+            gains[band + 1] = libvlc_audio_equalizer_get_amp_at_index(settings.get(), band);
+        presets.push_back({value, label.empty() ? value : label, gains});
     }
     libvlc_free(values);
     libvlc_free(labels);
@@ -132,26 +185,19 @@ void set_delay(VlcPlayer player, double seconds) {
 
 void set_equalizer(VlcPlayer player, const Preset *preset) {
     if (preset) {
-        const std::unique_ptr<Equalizer, decltype(&libvlc_audio_equalizer_release)>
-            settings(libvlc_audio_equalizer_new_from_preset(preset->index), libvlc_audio_equalizer_release);
-        if (!settings)
-            return;
-        const auto preamp = libvlc_audio_equalizer_get_preamp(settings.get());
-        std::string bands;
-        for (unsigned i = 0; i < libvlc_audio_equalizer_get_band_count(); ++i) {
-            if (i)
-                bands += ' ';
-            bands += std::to_string(libvlc_audio_equalizer_get_amp_at_index(settings.get(), i));
-        }
         config_PutPsz(player.vlc, preset_key, preset->key.c_str());
-        config_PutPsz(player.vlc, bands_key, bands.c_str());
-        config_PutFloat(player.vlc, preamp_key, preamp);
         const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
         set_string(output.get(), preset_key, preset->key);
-        set_string(output.get(), bands_key, bands);
-        set_float(output.get(), preamp_key, preamp);
+        write_gains(player, output.get(), preset->gains);
     }
     enable_filter(player, equalizer, preset != nullptr);
+}
+
+void set_equalizer_gains(VlcPlayer player, const EqualizerGains &gains) {
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    write_gains(player, output.get(), gains);
+    if (!contains_filter(string_option(player, output.get(), filter_key), equalizer))
+        enable_filter(player, equalizer, true);
 }
 
 void set_two_pass(VlcPlayer player, bool enabled) {

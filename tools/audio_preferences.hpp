@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,24 +13,30 @@ struct TestPlayer;
 
 enum class Filter { compressor, spatializer, widener };
 
+// Preamp followed by the ten frequency bands in VLC order.
+using EqualizerGains = std::array<float, 11>;
+inline constexpr int equalizer_min_db = -20, equalizer_max_db = 20;
+
 struct Settings {
     std::optional<double> delay;
     int stereo_mode;
     std::string equalizer;
+    EqualizerGains gains;
     bool two_pass, compressor, spatializer, widener;
     float pitch;
 };
 
 struct Preset {
     std::string key, label;
-    unsigned index;
+    EqualizerGains gains;
 };
 
-Settings read(VlcPlayer player);
+Settings read(VlcPlayer player, const std::vector<Preset> &presets);
 std::vector<Preset> equalizer_presets(VlcPlayer player);
 void set_stereo_mode(VlcPlayer player, int mode);
 void set_delay(VlcPlayer player, double seconds);
 void set_equalizer(VlcPlayer player, const Preset *preset);
+void set_equalizer_gains(VlcPlayer player, const EqualizerGains &gains);
 void set_two_pass(VlcPlayer player, bool enabled);
 void set_filter(VlcPlayer player, Filter filter, bool enabled);
 void set_pitch(VlcPlayer player, float semitones);

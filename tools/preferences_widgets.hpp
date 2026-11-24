@@ -119,7 +119,8 @@ inline void draw_toggle(HDC dc, RECT box, bool on, const Colors &colors, HFONT f
     text(dc, on ? L"ON" : L"OFF", on ? left : right, font, on ? colors.accent : colors.text, DT_CENTER);
 }
 
-inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool centered) {
+inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool centered,
+                           COLORREF thumb_color = RGB(211,121,24)) {
     if (drawing.dwDrawStage == CDDS_PREPAINT) {
         fill(drawing.hdc, drawing.rc, colors.panel);
         return CDRF_NOTIFYITEMDRAW;
@@ -134,7 +135,7 @@ inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool cen
     const bool enabled = IsWindowEnabled(control);
     if (drawing.dwItemSpec == TBCD_THUMB) {
         round_rect(drawing.hdc, {x - 4, y - 12, x + 5, y + 12}, 4,
-                   enabled ? RGB(211,121,24) : colors.knob);
+                   enabled ? thumb_color : colors.knob);
         return CDRF_SKIPDEFAULT;
     }
     if (drawing.dwItemSpec == TBCD_CHANNEL) {
@@ -179,6 +180,7 @@ class Scroll {
 public:
     explicit Scroll(int content_height) : content_height_(content_height) {}
 
+    void set_content_height(int height) { content_height_ = height; }
     int offset() const { return offset_; }
     int limit(RECT area) const { return std::max(0, content_height_ - static_cast<int>(area.bottom)); }
 
