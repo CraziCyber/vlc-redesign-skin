@@ -85,18 +85,19 @@ float gain(float value, float fallback) {
     return std::isfinite(value) ? std::clamp(value, float(equalizer_min_db), float(equalizer_max_db)) : fallback;
 }
 
-float compressor_value(const CompressorParameter &parameter, float value) {
+float filter_value(const FilterParameter &parameter, float value) {
     return std::isfinite(value) ? std::clamp(value, parameter.minimum, parameter.maximum) : parameter.initial;
 }
 
-CompressorValues read_compressor(VlcPlayer player, AudioOutput *output) {
-    CompressorValues values{};
+template<std::size_t N>
+std::array<float, N> read_filter_values(VlcPlayer player, AudioOutput *output, const FilterParameter (&parameters)[N]) {
+    std::array<float, N> values{};
     for (std::size_t i = 0; i < values.size(); ++i) {
-        const auto &parameter = compressor_parameters[i];
+        const auto &parameter = parameters[i];
         VlcValue live{};
         const float value = output && var_Get(output, parameter.key, &live) == 0
             ? live.real : config_GetFloat(player.vlc, parameter.key);
-        values[i] = compressor_value(parameter, value);
+        values[i] = filter_value(parameter, value);
     }
     return values;
 }
@@ -156,7 +157,8 @@ Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
         contains_filter(chain, pitch_filter)
             ? (output && var_Get(output.get(), pitch_key, &pitch) == 0 ? pitch.real : config_GetFloat(player.vlc, pitch_key))
             : 0.0f,
-        read_compressor(player, output.get()),
+        read_filter_values(player, output.get(), compressor_parameters),
+        read_filter_values(player, output.get(), spatializer_parameters),
     };
 }
 
@@ -231,8 +233,8 @@ void set_filter(VlcPlayer player, Filter filter, bool enabled) {
     enable_filter(player, filters[static_cast<unsigned>(filter)], enabled);
 }
 
-void set_compressor_value(VlcPlayer player, const CompressorParameter &parameter, float value) {
-    const auto bounded = compressor_value(parameter, value);
+void set_filter_value(VlcPlayer player, const FilterParameter &parameter, float value) {
+    const auto bounded = filter_value(parameter, value);
     config_PutFloat(player.vlc, parameter.key, bounded);
     const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
     set_float(output.get(), parameter.key, bounded);

@@ -119,8 +119,13 @@ inline void draw_toggle(HDC dc, RECT box, bool on, const Colors &colors, HFONT f
     text(dc, on ? L"ON" : L"OFF", on ? left : right, font, on ? colors.accent : colors.text, DT_CENTER);
 }
 
+struct SliderTicks {
+    int divisions{};
+    COLORREF unfilled{}, filled{};
+};
+
 inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool centered,
-                           COLORREF thumb_color = RGB(211,121,24)) {
+                           COLORREF thumb_color = RGB(211,121,24), SliderTicks ticks = {}) {
     if (drawing.dwDrawStage == CDDS_PREPAINT) {
         fill(drawing.hdc, drawing.rc, colors.panel);
         return CDRF_NOTIFYITEMDRAW;
@@ -143,6 +148,11 @@ inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool cen
         const LONG origin = centered ? (channel.left + channel.right) / 2 : channel.left;
         if (enabled && origin != x)
             round_rect(drawing.hdc, {std::min(origin, x), y - 6, std::max(origin, x), y + 6}, 3, colors.fill);
+        for (int i = 1; i < ticks.divisions; ++i) {
+            const LONG tick = channel.left + (channel.right - channel.left) * i / ticks.divisions;
+            const bool filled = enabled && tick > std::min(origin, x) && tick < std::max(origin, x);
+            fill(drawing.hdc, {tick - 1, y - 4, tick + 1, y + 4}, filled ? ticks.filled : ticks.unfilled);
+        }
         return CDRF_SKIPDEFAULT;
     }
     return CDRF_DODEFAULT;
