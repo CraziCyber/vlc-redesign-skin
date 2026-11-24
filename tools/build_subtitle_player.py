@@ -8,6 +8,8 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from build import (  # noqa: E402
@@ -16,6 +18,7 @@ from build import (  # noqa: E402
     PREFERENCES_TOP, PREFERENCES_WIDTH, build,
 )
 from skinlib.context_menu import write_resources  # noqa: E402
+from skinlib.paint import FIGMA  # noqa: E402
 
 MODULE = "libsubtitlepanel_plugin.dll"
 CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vlc_object_release",
@@ -41,6 +44,35 @@ LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_n
                   "libvlc_media_player_new_from_media", "libvlc_media_player_play", "libvlc_media_player_stop",
                   "libvlc_media_player_get_state", "libvlc_media_player_release", "libvlc_audio_output_device_set")
 
+# VLC preset keys and the corresponding 24 px symbols in the Figma icon sheet.
+PRESET_ICONS = {
+    "flat": (372, 592), "classical": (416, 592), "club": (460, 592), "dance": (504, 592),
+    "fullbass": (20, 636), "fullbasstreble": (64, 636), "fulltreble": (108, 636), "headphones": (152, 636),
+    "largehall": (416, 636), "live": (64, 680), "party": (20, 680), "pop": (504, 636),
+    "reggae": (460, 636), "rock": (196, 636), "ska": (240, 636), "soft": (284, 636),
+    "softrock": (372, 636), "techno": (328, 636),
+}
+
+
+def write_preset_icons(directory):
+    size, resource = 24, 104
+    # The last cell is the orange selection check.
+    cells = [*PRESET_ICONS.values(), (240, 416)]
+    sheet = Image.open(FIGMA / "icons-42_356.png").convert("RGBA")
+    atlas = Image.new("RGBA", (len(cells) * size, size))
+    for index, (x, y) in enumerate(cells):
+        atlas.paste(sheet.crop((x, y, x + size, y + size)), (index * size, 0))
+    bitmap = directory / "equalizer_icons.bgra"
+    bitmap.write_bytes(atlas.convert("RGBa").tobytes("raw", "BGRa"))
+    keys = ", ".join(f'"{key}"' for key in PRESET_ICONS)
+    (directory / "equalizer_icons.hpp").write_text(
+        "#pragma once\n\nnamespace equalizer_icons {\n"
+        f"constexpr int resource = {resource}, size = {size}, count = {len(cells)};\n"
+        f"constexpr const char *keys[] = {{ {keys} }};\n"
+        "}\n", encoding="ascii",
+    )
+    return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
+
 
 def build_module(output, toolchain):
     with TemporaryDirectory() as temporary:
@@ -57,6 +89,7 @@ def build_module(output, toolchain):
         resources = temp / "context_menu.o"
         resource_script = write_resources(temp)
         with resource_script.open("a", encoding="utf-8") as script:
+            script.write(write_preset_icons(temp))
             dialog_resource = ROOT / "tools/add_subtitles.rc"
             script.write(f'#include "{dialog_resource.as_posix()}"\n')
         subprocess.run([toolchain / "windres.exe", "-c", "65001", "-i", resource_script,
@@ -79,7 +112,7 @@ def build_module(output, toolchain):
                         ROOT / "tools/subtitle_style_filter.cpp", ROOT / "tools/subtitle_speed_filter.cpp",
                         ROOT / "tools/opensubtitles.cpp", resources,
                         ROOT / "tools/subtitle_folder.cpp", ROOT / "tools/local_subtitles.cpp", ROOT / "tools/subtitle_drop.cpp",
-                        *import_libraries, "-lgdiplus", "-lgdi32", "-luser32", "-lcomctl32", "-lcomdlg32", "-ldwmapi",
+                        *import_libraries, "-lgdiplus", "-lgdi32", "-lmsimg32", "-luser32", "-lcomctl32", "-lcomdlg32", "-ldwmapi",
                         "-lwinhttp", "-lruntimeobject", "-ladvapi32", "-lole32", "-lshell32", "-luuid"], check=True)
 
 

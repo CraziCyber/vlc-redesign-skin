@@ -3,10 +3,12 @@
 #define UNICODE
 #include "audio_preferences_view.hpp"
 #include "audio_preferences.hpp"
+#include "equalizer_icons.hpp"
 #include "preferences_widgets.hpp"
 #include "track_defaults.hpp"
 #include "vlc_config.hpp"
 
+#include <cstring>
 #include <utility>
 
 namespace audio_preferences_view {
@@ -16,6 +18,7 @@ using namespace preferences_widgets;
 using namespace audio_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignAudioPreferences";
 constexpr int inset = 20, label_inset = 24, field_width = 142, toggle_width = 68, option_height = 27;
+constexpr int preset_height = 46, preset_list_height = 300, dropdown_radius = 6;
 constexpr int sync_y = 292, filters_y = 476, compressor_y = 756, spatializer_y = 881;
 constexpr int widener_y = 1006, pitch_y = 1131, content_height = 1229;
 constexpr UINT_PTR refresh_timer = 1;
@@ -24,7 +27,7 @@ constexpr auto defaults_kind = track_defaults::Kind::audio;
 enum Control {
     audio_track = 201, audio_language, stereo_test, stereo_mode, delay, delay_slider,
     equalizer, expand_equalizer, two_pass, compressor, expand_compressor, spatializer,
-    expand_spatializer, widener, expand_widener, pitch_slider, choices,
+    expand_spatializer, widener, expand_widener, pitch_slider, choices, preset_choices,
 };
 enum class Type { edit, button, slider, expand };
 struct Row {
@@ -53,6 +56,68 @@ constexpr Row rows[] = {
 };
 constexpr const wchar_t *stereo_modes[] = {
     L"Automatic", L"Stereo", L"Reverse Stereo", L"Left", L"Right", L"Dolby Surround", L"Headphones", L"Mono"
+};
+
+class PresetIcons {
+public:
+    ~PresetIcons() {
+        if (previous_)
+            SelectObject(dc_, previous_);
+        if (atlas_)
+            DeleteObject(atlas_);
+        if (dc_)
+            DeleteDC(dc_);
+    }
+
+    void load(HINSTANCE module) {
+        using namespace equalizer_icons;
+        constexpr int width = count * size;
+        constexpr DWORD bytes = width * size * 4;
+        const auto entry = FindResourceW(module, MAKEINTRESOURCEW(resource), RT_RCDATA);
+        if (!entry || SizeofResource(module, entry) != bytes)
+            return;
+        const auto source = LockResource(LoadResource(module, entry));
+        if (!source)
+            return;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -size;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        dc_ = CreateCompatibleDC(nullptr);
+        if (!dc_)
+            return;
+        void *pixels = nullptr;
+        atlas_ = CreateDIBSection(dc_, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+        if (atlas_) {
+            std::memcpy(pixels, source, bytes);
+            previous_ = SelectObject(dc_, atlas_);
+        }
+    }
+
+    void curve(HDC dc, int x, int y, std::string_view key) const {
+        using namespace equalizer_icons;
+        const auto icon = std::find(std::begin(keys), std::end(keys), key);
+        if (icon != std::end(keys))
+            draw(dc, x, y, static_cast<int>(icon - std::begin(keys)));
+    }
+
+    void selected(HDC dc, int x, int y) const {
+        draw(dc, x, y, equalizer_icons::count - 1);
+    }
+
+private:
+    HDC dc_ = nullptr;
+    HBITMAP atlas_ = nullptr;
+    HGDIOBJ previous_ = nullptr;
+
+    void draw(HDC dc, int x, int y, int index) const {
+        using namespace equalizer_icons;
+        if (atlas_)
+            AlphaBlend(dc, x, y, size, size, dc_, index * size, 0, size, size, {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
+    }
 };
 
 void arrow(HDC dc, int x, int y, bool down, COLORREF color) {
@@ -124,7 +189,13 @@ public:
         if (!IsWindowVisible(window_))
             return false;
         if (dropdown_) {
-            const auto list = control(choices);
+            const auto id = *dropdown_;
+            const auto list = choice_list(id);
+            if (id == equalizer && message.hwnd == control(id) &&
+                (message.message == WM_LBUTTONDOWN || message.message == WM_LBUTTONDBLCLK)) {
+                close_choices(true);
+                return true;
+            }
             if (message.hwnd == list && message.message == WM_LBUTTONUP) {
                 const auto item = SendMessageW(list, LB_ITEMFROMPOINT, 0, message.lParam);
                 if (HIWORD(item) == 0) {
@@ -145,14 +216,23 @@ public:
                 if (message.wParam == VK_TAB)
                     close_choices(true);
             }
-            if (message.message == WM_LBUTTONDOWN && message.hwnd != list && message.hwnd != control(*dropdown_))
+            if (message.message == WM_LBUTTONDOWN && message.hwnd != list && message.hwnd != control(id))
                 close_choices(false);
             if (message.message == WM_MOUSEWHEEL) {
                 RECT menu{};
                 GetWindowRect(list, &menu);
+                const POINT pointer{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+                if (id == equalizer) {
+                    RECT header{};
+                    GetWindowRect(control(id), &header);
+                    if (message.hwnd == list || PtInRect(&menu, pointer) || PtInRect(&header, pointer)) {
+                        scroll_presets(GET_WHEEL_DELTA_WPARAM(message.wParam));
+                        return true;
+                    }
+                }
                 if (message.hwnd == list)
                     return false;
-                if (PtInRect(&menu, {GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)})) {
+                if (PtInRect(&menu, pointer)) {
                     SendMessageW(list, message.message, message.wParam, message.lParam);
                     return true;
                 }
@@ -193,6 +273,7 @@ private:
     const Colors &colors_;
     track_defaults::Preset defaults_;
     std::vector<Preset> presets_;
+    PresetIcons preset_icons_;
     Settings settings_{};
     StereoTest test_;
     Scroll scroll_{content_height};
@@ -202,9 +283,11 @@ private:
     const wchar_t *defaults_notice_ = nullptr;
     std::optional<Control> edited_;
     std::optional<Control> dropdown_;
+    int preset_wheel_ = 0;
     std::wstring original_;
 
     HWND control(Control id) const { return GetDlgItem(window_, id); }
+    HWND choice_list(Control id) const { return control(id == equalizer ? preset_choices : choices); }
 
     RECT bounds() const {
         RECT area{};
@@ -243,15 +326,20 @@ private:
                 SendMessageW(child, TBM_SETPAGESIZE, 0, pitch ? 10 : 500);
             }
         }
-        const auto list = CreateWindowExW(0, L"LISTBOX", nullptr,
-                                         WS_CHILD | WS_CLIPSIBLINGS | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY |
-                                             LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
-                                         0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(choices)),
-                                         reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE)), nullptr);
-        if (!list)
-            return false;
-        SendMessageW(list, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
-        SendMessageW(list, LB_SETITEMHEIGHT, 0, option_height);
+        const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
+        for (const auto id : {choices, preset_choices}) {
+            const DWORD scrollbar = id == choices ? WS_VSCROLL : 0;
+            const auto list = CreateWindowExW(0, L"LISTBOX", nullptr,
+                                             WS_CHILD | WS_CLIPSIBLINGS | scrollbar | LBS_NOINTEGRALHEIGHT |
+                                                 LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+                                             0, 0, 0, 0, window_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), module, nullptr);
+            if (!list)
+                return false;
+            SendMessageW(list, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
+            SendMessageW(list, LB_SETITEMHEIGHT, 0, id == choices ? option_height : preset_height);
+        }
+        preset_icons_.load(module);
         show_defaults();
         refresh();
         SetTimer(window_, refresh_timer, 240, nullptr);
@@ -288,6 +376,19 @@ private:
     void show_control(HWND child) {
         if (scroll_.show(window_, child, bounds()))
             layout();
+    }
+
+    COLORREF presets_background() const { return &colors_ == &dark ? RGB(25, 25, 25) : colors_.button; }
+    COLORREF preset_selection() const { return &colors_ == &dark ? RGB(31, 31, 31) : colors_.hover; }
+
+    void draw_preset_label(HDC dc, RECT box, int index, const wchar_t *label) const {
+        box.left += 16;
+        if (index > 0 && static_cast<std::size_t>(index) <= presets_.size()) {
+            preset_icons_.curve(dc, box.left, (box.top + box.bottom - equalizer_icons::size) / 2,
+                                presets_[index - 1].key);
+            box.left += equalizer_icons::size + 10;
+        }
+        text(dc, label, box, regular_, colors_.text);
     }
 
     void draw(HDC dc) const {
@@ -345,6 +446,16 @@ private:
             return;
         default: break;
         }
+        if (id == equalizer && dropdown_ == equalizer) {
+            const auto background = preset_selection();
+            round_rect(dc, area, dropdown_radius, background);
+            fill(dc, {area.left, area.top + dropdown_radius, area.right, area.bottom}, background);
+            preset_icons_.selected(dc, area.right - 40, (area.top + area.bottom - equalizer_icons::size) / 2);
+            const auto label = window_text(item.hwndItem);
+            area.right -= 45;
+            draw_preset_label(dc, area, equalizer_choice(), label.c_str());
+            return;
+        }
         const bool dropdown = id == stereo_mode || id == equalizer;
         round_rect(dc, area, 6, colors_.track);
         if (dropdown) {
@@ -352,24 +463,37 @@ private:
             round_rect(dc, area, 4, (item.itemState & ODS_SELECTED) ? colors_.hover : colors_.button);
         }
         const auto label = window_text(item.hwndItem);
-        text(dc, label.c_str(), {area.left + 16, area.top, area.right - 38, area.bottom},
-             regular_, dropdown ? colors_.text : colors_.dim);
+        if (id == equalizer) {
+            draw_preset_label(dc, {area.left - 2, area.top, area.right - 38, area.bottom},
+                              equalizer_choice(), label.c_str());
+        } else {
+            text(dc, label.c_str(), {area.left + 16, area.top, area.right - 38, area.bottom},
+                 regular_, dropdown ? colors_.text : colors_.dim);
+        }
         arrow(dc, area.right - 23, (area.top + area.bottom) / 2, dropdown, dropdown ? colors_.text : colors_.dim);
     }
 
     void draw_choice(const DRAWITEMSTRUCT &item) const {
         const auto dc = item.hDC;
+        const bool equalizer_list = item.CtlID == preset_choices;
         const bool selected = (item.itemState & ODS_SELECTED) != 0;
-        fill(dc, item.rcItem, selected ? colors_.fill : colors_.button);
+        const auto background = equalizer_list ? (selected ? preset_selection() : presets_background()) :
+                                                (selected ? colors_.fill : colors_.button);
+        fill(dc, item.rcItem, background);
         if (item.itemID == UINT(-1))
             return;
         wchar_t label[128]{};
         if (SendMessageW(item.hwndItem, LB_GETTEXTLEN, item.itemID, 0) < static_cast<LRESULT>(std::size(label))) {
             SendMessageW(item.hwndItem, LB_GETTEXT, item.itemID, reinterpret_cast<LPARAM>(label));
             auto box = item.rcItem;
-            box.left += 13;
             box.right -= 8;
-            text(dc, label, box, regular_, selected ? colors_.accent : colors_.text);
+            if (equalizer_list) {
+                const auto index = SendMessageW(item.hwndItem, LB_GETITEMDATA, item.itemID, 0);
+                draw_preset_label(dc, box, static_cast<int>(index), label);
+            } else {
+                box.left += 13;
+                text(dc, label, box, regular_, selected ? colors_.accent : colors_.text);
+            }
         }
     }
 
@@ -398,6 +522,8 @@ private:
 
     void refresh() {
         const auto old = std::exchange(settings_, read(player_));
+        if (dropdown_ == equalizer && old.equalizer != settings_.equalizer)
+            close_choices(true);
         set_button_text(stereo_mode, stereo_modes[stereo_choice()]);
         const int choice = equalizer_choice();
         const auto preset = choice ? wstring(presets_[choice - 1].label) : std::wstring(L"None");
@@ -454,10 +580,11 @@ private:
         const auto id = std::exchange(dropdown_, std::nullopt);
         if (!id)
             return;
-        const auto list = control(choices);
+        const auto list = choice_list(*id);
         if (GetCapture() == list)
             ReleaseCapture();
         ShowWindow(list, SW_HIDE);
+        InvalidateRect(control(*id), nullptr, FALSE);
         if (focus_button)
             SetFocus(control(*id));
     }
@@ -472,31 +599,84 @@ private:
         RECT box{};
         GetWindowRect(field, &box);
         MapWindowPoints(nullptr, window_, reinterpret_cast<POINT *>(&box), 2);
-        const int below = bounds().bottom - box.bottom, above = box.top;
-        const int desired = std::min<int>(labels.size(), 8) * option_height;
-        const bool down = below >= desired || below >= above;
-        const int count = std::max(1, (down ? below : above) / option_height);
-        const int height = std::min(desired, count * option_height);
-        const auto list = control(choices);
+        const auto area = bounds();
+        const bool equalizer_list = id == equalizer;
+        int top, height;
+        if (equalizer_list) {
+            const int desired = std::min<int>(preset_list_height, (labels.size() - 1) * preset_height);
+            height = std::min<int>(desired, std::max(1L, area.bottom - (box.bottom - box.top)));
+            const int offset = scroll_.offset();
+            const int shortage = std::max(0L, box.bottom + height - area.bottom);
+            if (scroll_.move(offset + shortage, area)) {
+                layout();
+                OffsetRect(&box, 0, offset - scroll_.offset());
+            }
+            top = box.bottom;
+            height = std::min<int>(height, area.bottom - top);
+            if (height <= 0)
+                return;
+        } else {
+            const int below = area.bottom - box.bottom, above = box.top;
+            const int desired = std::min<int>(labels.size(), 8) * option_height;
+            const bool down = below >= desired || below >= above;
+            const int count = std::max(1, (down ? below : above) / option_height);
+            height = std::min(desired, count * option_height);
+            top = std::clamp<int>(down ? box.bottom : box.top - height, 0, std::max(0L, area.bottom - height));
+        }
+        const auto list = choice_list(id);
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
-        for (const auto &label : labels)
-            SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            if (equalizer_list && static_cast<int>(i) == selected)
+                continue;
+            const auto index = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(labels[i].c_str()));
+            if (equalizer_list && index >= 0)
+                SendMessageW(list, LB_SETITEMDATA, index, i);
+        }
         dropdown_ = id;
-        const int top = std::clamp<int>(down ? box.bottom : box.top - height, 0, std::max(0L, bounds().bottom - height));
-        SetWindowPos(list, HWND_TOP, box.left, top, box.right - box.left, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
-        SendMessageW(list, LB_SETCURSEL, selected, 0);
+        const int width = box.right - box.left;
+        if (equalizer_list) {
+            // The button stays above the scrolling choices and supplies the rounded top of the menu.
+            const auto shape = CreateRoundRectRgn(0, -dropdown_radius, width + 1, height + 1,
+                                                  2 * dropdown_radius, 2 * dropdown_radius);
+            if (shape && !SetWindowRgn(list, shape, FALSE))
+                DeleteObject(shape);
+            preset_wheel_ = 0;
+            InvalidateRect(field, nullptr, FALSE);
+        }
+        SetWindowPos(list, HWND_TOP, box.left, top, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        SendMessageW(list, LB_SETCURSEL, equalizer_list ? -1 : selected, 0);
         SetFocus(list);
+    }
+
+    void scroll_presets(int delta) {
+        const auto list = control(preset_choices);
+        RECT area{};
+        GetClientRect(list, &area);
+        const int count = SendMessageW(list, LB_GETCOUNT, 0, 0);
+        const int current = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
+        const int visible = std::max(1L, area.bottom / preset_height);
+        preset_wheel_ += delta;
+        const int position = std::clamp(current - 2 * (preset_wheel_ / WHEEL_DELTA), 0, std::max(0, count - visible));
+        preset_wheel_ %= WHEEL_DELTA;
+        if (position != current)
+            SendMessageW(list, LB_SETTOPINDEX, position, 0);
     }
 
     void select_choice(int selected) {
         const auto field = dropdown_;
-        if (!field || selected < 0 || selected >= SendMessageW(control(choices), LB_GETCOUNT, 0, 0))
+        if (!field || selected < 0)
+            return;
+        const auto list = choice_list(*field);
+        if (selected >= SendMessageW(list, LB_GETCOUNT, 0, 0))
+            return;
+        const auto index = *field == equalizer ? SendMessageW(list, LB_GETITEMDATA, selected, 0) : selected;
+        if (index < 0 || (*field == equalizer && static_cast<std::size_t>(index) > presets_.size()))
             return;
         close_choices(true);
         if (*field == stereo_mode)
-            set_stereo_mode(player_, selected);
+            set_stereo_mode(player_, static_cast<int>(index));
         else
-            set_equalizer(player_, selected ? &presets_[selected - 1] : nullptr);
+            set_equalizer(player_, index ? &presets_[index - 1] : nullptr);
         vlc_config::save(player_.vlc);
         refresh();
     }
@@ -528,7 +708,8 @@ private:
     }
 
     void command(Control id, int event) {
-        if (id == choices && event == LBN_KILLFOCUS) {
+        if ((id == choices || id == preset_choices) && event == LBN_KILLFOCUS &&
+            dropdown_ && control(id) == choice_list(*dropdown_)) {
             close_choices(false);
             return;
         }
@@ -614,7 +795,7 @@ private:
         }
         case WM_DRAWITEM: {
             const auto &item = *reinterpret_cast<const DRAWITEMSTRUCT *>(lp);
-            if (item.CtlID == choices)
+            if (item.CtlID == choices || item.CtlID == preset_choices)
                 draw_choice(item);
             else
                 draw_button(item);
@@ -628,8 +809,10 @@ private:
         }
         case WM_CTLCOLORLISTBOX: {
             const auto dc = reinterpret_cast<HDC>(wp);
-            SetBkColor(dc, colors_.button);
-            SetDCBrushColor(dc, colors_.button);
+            const auto background = reinterpret_cast<HWND>(lp) == control(preset_choices)
+                ? presets_background() : colors_.button;
+            SetBkColor(dc, background);
+            SetDCBrushColor(dc, background);
             return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
         }
         case WM_CTLCOLOREDIT:
