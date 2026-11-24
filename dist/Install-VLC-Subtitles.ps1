@@ -86,8 +86,15 @@ function Enable-LiveSubtitles([string] $ConfigPath, [string] $SkinPath) {
         $interfaces = if ($interfaces) { "$($interfaces.TrimEnd(':')):subtitlepanel" } else { 'subtitlepanel' }
     }
 
+    $configuredFilters = [regex]::Matches($original, '(?m)^demux-filter=([^\r\n]*)')
+    $filters = if ($configuredFilters.Count) { $configuredFilters[$configuredFilters.Count - 1].Groups[1].Value } else { '' }
+    if ($filters -notmatch '(?:^|:)redesignsubtitlespeed(?:$|[{:])') {
+        $filters = if ($filters) { "redesignsubtitlespeed:$filters" } else { 'redesignsubtitlespeed' }
+    }
+
     $updated = Set-VlcOption $original 'core' 'intf' 'skins2' $newline
     $updated = Set-VlcOption $updated 'core' 'extraintf' $interfaces $newline
+    $updated = Set-VlcOption $updated 'core' 'demux-filter' $filters $newline
     $updated = Set-VlcOption $updated 'skins2' 'skins2-last' $SkinPath $newline
     if ($updated -ceq $original) { return }
 

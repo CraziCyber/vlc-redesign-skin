@@ -41,7 +41,13 @@ You can also drag `.srt` files from File Explorer onto the player during playbac
 
 Right-click the player to open the redesigned menu. Use the arrow keys and Enter to navigate, or press Esc to close it. The menu shows the shortcuts configured in VLC. **Hide UI** slides the player controls away in the current window. Select **Show UI** to slide them back, or use `Ctrl + \` if that combination is unassigned in VLC.
 
-With the skin on, Preferences are under **Settings** in the ••• menu at the top left.
+The gear in the playback controls opens a four-tab preferences sidebar. Click the gear again or click outside the sidebar to close it. VLC's preferences are under **Settings** in the ••• menu at the top left.
+
+Under **Defaults** in the gear's **Subtitles** tab, enter a **Subtitle Track** number (starting at `1`) and a **Subtitle Language** such as `English` or `en`. Press Enter to save. The preset chooses the numbered track if it matches the language, or the first track in that language. If the language is unavailable, VLC keeps its usual selection. Use **Auto** for the track and **Any language** for the language to clear the preset. A manual switch applies to the current video.
+
+Under **Synchronization**, drag the sliders or type a value and press Enter. **Subtitle Speed** retimes external SubRip (`.srt`) and MicroDVD (`.sub`) tracks during playback. Set it to `1.000 fps` for automatic timing. Use `0` for **Subtitle Duration Factor** to turn the duration filter off.
+
+Scroll to **Appearance** to set the font, colors, offset, size and outline, background opacity, and embedded formatting for supported text tracks. **Font Size** resizes text rendered by VLC's FreeType renderer while the cue is visible. The first **Pixels** value is calculated from the **Relative** size and the displayed video. With no video visible it uses a 720 px reference height. VLC saves the appearance choices. Reopen the video when the sidebar asks you to apply changes that the current renderer has cached.
 
 ## What's included
 

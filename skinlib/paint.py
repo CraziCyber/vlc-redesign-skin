@@ -187,9 +187,11 @@ def text_width(s, size, weight="regular"):
 # Top-left corner of each 24 x 24 symbol inside the Figma "Icon" component set
 # (node 42:356, saved as reference/figma/icons-42_356.png at 1x).
 ICONS = {
-    "settings": (20, 20), "playback_settings": (108, 20), "preferences": (240, 20),
+    "settings": (20, 20), "playback_settings": (108, 20), "playback_settings_active": (152, 20),
+    "preferences": (240, 20),
     "playlist": (328, 20), "playlist_active": (416, 20), "lists": (460, 20),
     "lists_active": (504, 20), "hotkeys": (20, 64), "subtitles": (152, 64),
+    "subtitles_outline_active": (196, 64),
     "subtitles_active": (240, 64), "audio": (284, 64), "audio_active": (372, 64),
     "play": (416, 64), "media": (460, 64), "pause": (108, 108), "next": (152, 108),
     "stop": (240, 108), "previous": (328, 108), "fwd10": (416, 108), "back10": (504, 108),

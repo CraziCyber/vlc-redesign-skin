@@ -10,27 +10,44 @@ from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from build import NAME, build  # noqa: E402
+from build import (  # noqa: E402
+    NAME, PREFERENCES_BODY_BOTTOM, PREFERENCES_BODY_LEFT, PREFERENCES_BODY_RIGHT, PREFERENCES_BOTTOM,
+    PREFERENCES_CORNER, PREFERENCES_HEADER, PREFERENCES_MARGIN, PREFERENCES_TABS, PREFERENCES_TAB_TOP,
+    PREFERENCES_TOP, PREFERENCES_WIDTH, build,
+)
 from skinlib.context_menu import write_resources  # noqa: E402
 
 MODULE = "libsubtitlepanel_plugin.dll"
 CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vlc_object_release",
                 "var_Create", "var_Destroy", "var_Get", "var_Set",
-                "var_Change", "var_FreeList", "input_GetItem", "input_item_GetURI", "input_item_GetTitleFbName",
+                "var_Change", "var_FreeList", "var_Inherit", "var_Type", "input_GetItem", "input_item_GetURI", "input_item_GetTitleFbName",
                 "input_item_GetMeta", "vlc_uri2path",
                 "input_Control", "vlc_path2uri",
                 "playlist_GetAout", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext",
-                "playlist_Status", "config_GetPsz", "config_PutPsz", "vlc_actions_get_id", "vlc_actions_get_key_names", "vlc_actions_get_keycodes",
+                "playlist_Status", "config_GetPsz", "config_PutPsz", "config_GetInt", "config_PutInt", "config_GetFloat",
+                "config_SaveConfigFile", "demux_vaControl", "module_get_object", "text_style_Delete",
+                "vlc_list_children", "vlc_list_release", "GetLang_1",
+                "GetLang_2T", "GetLang_2B",
+                "vlc_actions_get_id", "vlc_actions_get_key_names", "vlc_actions_get_keycodes",
                 "vlc_keycode2str", "vlc_str2keycode")
 LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_new_location",
                   "libvlc_media_release", "libvlc_media_parse_with_options",
                   "libvlc_media_get_parsed_status", "libvlc_media_parse_stop",
-                  "libvlc_media_tracks_get", "libvlc_media_tracks_release")
+                  "libvlc_media_tracks_get", "libvlc_media_tracks_release", "libvlc_media_new_from_input_item")
 
 
 def build_module(output, toolchain):
     with TemporaryDirectory() as temporary:
         temp = Path(temporary)
+        geometry = dict(width=PREFERENCES_WIDTH, top=PREFERENCES_TOP, bottom=PREFERENCES_BOTTOM,
+                        margin=PREFERENCES_MARGIN, header=PREFERENCES_HEADER, tab_top=PREFERENCES_TAB_TOP,
+                        tabs=PREFERENCES_TABS, body_left=PREFERENCES_BODY_LEFT, body_right=PREFERENCES_BODY_RIGHT,
+                        body_bottom=PREFERENCES_BODY_BOTTOM, corner=PREFERENCES_CORNER)
+        (temp / "preferences_layout.hpp").write_text(
+            "#pragma once\n\nnamespace preferences_layout {\n"
+            + "".join(f"constexpr int {name} = {value};\n" for name, value in geometry.items()) + "}\n",
+            encoding="ascii",
+        )
         resources = temp / "context_menu.o"
         resource_script = write_resources(temp)
         with resource_script.open("a", encoding="utf-8") as script:
@@ -49,9 +66,13 @@ def build_module(output, toolchain):
         subprocess.run([toolchain / "g++.exe", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
                         "-shared", "-static", "-I", temp, "-o", output, ROOT / "tools/subtitle_panel.cpp",
                         ROOT / "tools/add_subtitles.cpp", ROOT / "tools/context_menu.cpp", ROOT / "tools/hidden_controls.cpp",
-                        ROOT / "tools/player_window.cpp", ROOT / "tools/opensubtitles.cpp", resources,
+                        ROOT / "tools/player_window.cpp", ROOT / "tools/preferences_sidebar.cpp",
+                        ROOT / "tools/subtitle_preferences.cpp", ROOT / "tools/subtitle_preferences_view.cpp",
+                        ROOT / "tools/subtitle_defaults.cpp",
+                        ROOT / "tools/subtitle_style_filter.cpp", ROOT / "tools/subtitle_speed_filter.cpp",
+                        ROOT / "tools/opensubtitles.cpp", resources,
                         ROOT / "tools/subtitle_folder.cpp", ROOT / "tools/local_subtitles.cpp", ROOT / "tools/subtitle_drop.cpp",
-                        *import_libraries, "-lgdiplus", "-lgdi32", "-luser32", "-lcomctl32", "-ldwmapi",
+                        *import_libraries, "-lgdiplus", "-lgdi32", "-luser32", "-lcomctl32", "-lcomdlg32", "-ldwmapi",
                         "-lwinhttp", "-lruntimeobject", "-ladvapi32", "-lole32", "-lshell32", "-luuid"], check=True)
 
 
@@ -80,6 +101,7 @@ def prepare_player(vlc, output, toolchain):
     launcher.write_text(
         '@echo off\n'
         '"%~dp0vlc.exe" --no-one-instance -I skins --extraintf=subtitlepanel '
+        '--demux-filter=redesignsubtitlespeed '
         f'--skins2-last="%~dp0skins\\{NAME}.vlt" %*\n', encoding="ascii"
     )
     print(launcher)

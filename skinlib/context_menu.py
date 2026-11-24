@@ -28,6 +28,7 @@ SKIN_ACTIONS = {
     "toggle_playlist": "main.setLayout({theme}_{playlist_layout})",
     "load_playlist": "playlist.load()",
     "save_playlist": "playlist.save()",
+    "dismiss_preferences": "{dismiss_preferences}",
 }
 
 # Coordinates in the original 24 px Figma icon sheet.
@@ -54,10 +55,23 @@ ICONS = {
 def add_skin_commands(layout, theme, pixel):
     # The module invokes these native skin actions on the Skins2 UI thread.
     # The panel keeps the action targets outside the drawable player area.
-    playlist_layout = "full" if layout.id.endswith("_side") else "side"
+    kind = layout.id.removeprefix(f"{theme['name']}_")
+    base_kind = kind.removesuffix("_preferences")
+    playlist_layout = "full" if base_kind == "side" else "side"
+    fullscreen_preferences = kind.startswith("preferences")
+    dismiss_preferences = None
+    if base_kind != kind:
+        dismiss_preferences = f"main.setLayout({theme['name']}_{base_kind})"
+    elif fullscreen_preferences:
+        dismiss_preferences = "preferenceswin.hide()"
     with layout.panel(COMMAND_X, 0, 1, len(SKIN_ACTIONS), anchor="tl"):
         for index, (name, action) in enumerate(SKIN_ACTIONS.items()):
-            context_action = action.format(theme=theme["name"], playlist_layout=playlist_layout)
+            if name == "dismiss_preferences" and not dismiss_preferences:
+                continue
+            if fullscreen_preferences and name != "dismiss_preferences":
+                continue
+            context_action = action.format(theme=theme["name"], playlist_layout=playlist_layout,
+                                           dismiss_preferences=dismiss_preferences)
             layout.button((pixel, pixel, pixel), 0, index, context_action, hint=name)
 
 

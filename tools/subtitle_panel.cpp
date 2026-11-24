@@ -26,16 +26,14 @@
 #include "context_menu.hpp"
 #include "hidden_controls.hpp"
 #include "player_window.hpp"
+#include "preferences_sidebar.hpp"
 #include "subtitle_drop.hpp"
+#include "vlc_input.hpp"
+#include "subtitle_defaults.hpp"
 
 // The VLC 3.0 module ABI used here is defined by vlc_common.h, vlc_interface.h,
 // vlc_plugin.h, vlc_variables.h, vlc_playlist.h and vlc_aout.h.
-struct Playlist;
-struct Input;
-struct InputItem;
 struct AudioOutput;
-struct LibVlc;
-struct Media;
 template<class Parent>
 struct VlcObject {
     const char *object_type;
@@ -70,40 +68,14 @@ struct Playlist {
 };
 static_assert(offsetof(Playlist, playing) == 120, "VLC 3.0.24 64-bit playlist layout");
 
-struct VlcList;
-union VlcValue {
-    std::int64_t integer;
-    bool boolean;
-    char *string;
-    VlcList *list;
-};
-struct VlcList {
-    int type;
-    int count;
-    VlcValue *values;
-};
-struct MediaTrack {
-    std::uint32_t codec, original_codec;
-    int id, type;
-};
-
 extern "C" {
-__declspec(dllimport) Input *playlist_CurrentInput(Playlist *);
-__declspec(dllimport) int input_Control(Input *, int, ...);
 __declspec(dllimport) void playlist_Lock(Playlist *);
 __declspec(dllimport) void playlist_Unlock(Playlist *);
 __declspec(dllimport) AudioOutput *playlist_GetAout(Playlist *);
-__declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int aout_DevicesList(AudioOutput *, char ***, char ***);
 __declspec(dllimport) char *aout_DeviceGet(AudioOutput *);
 __declspec(dllimport) int aout_DeviceSet(AudioOutput *, const char *);
-__declspec(dllimport) int var_Create(void *, const char *, int);
 __declspec(dllimport) void var_Destroy(void *, const char *);
-__declspec(dllimport) int var_Get(void *, const char *, VlcValue *);
-__declspec(dllimport) int var_Set(void *, const char *, VlcValue);
-__declspec(dllimport) int var_Change(Input *, const char *, int, VlcValue *, VlcValue *);
-__declspec(dllimport) void var_FreeList(VlcValue *, VlcValue *);
-__declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) char *input_item_GetURI(InputItem *);
 __declspec(dllimport) char *input_item_GetTitleFbName(InputItem *);
 __declspec(dllimport) char *input_item_GetMeta(InputItem *, int);
@@ -113,16 +85,10 @@ __declspec(dllimport) const char *vlc_gettext(const char *);
 __declspec(dllimport) int playlist_Status(Playlist *);
 __declspec(dllimport) char *config_GetPsz(void *, const char *);
 __declspec(dllimport) int vlc_actions_get_id(const char *);
-__declspec(dllimport) LibVlc *libvlc_new(int, const char *const *);
-__declspec(dllimport) void libvlc_release(LibVlc *);
-__declspec(dllimport) void libvlc_free(void *);
 __declspec(dllimport) Media *libvlc_media_new_location(LibVlc *, const char *);
-__declspec(dllimport) void libvlc_media_release(Media *);
 __declspec(dllimport) int libvlc_media_parse_with_options(Media *, int, int);
 __declspec(dllimport) int libvlc_media_get_parsed_status(Media *);
 __declspec(dllimport) void libvlc_media_parse_stop(Media *);
-__declspec(dllimport) unsigned libvlc_media_tracks_get(Media *, MediaTrack ***);
-__declspec(dllimport) void libvlc_media_tracks_release(MediaTrack **, unsigned);
 }
 
 namespace {
@@ -154,14 +120,11 @@ constexpr LONG popup_right_margin = 16, popup_gap = 20;
 constexpr int none_control = 1, track_control = 2, device_control = 3, refresh_control = 4;
 constexpr int external_control = 5, add_control = 6;
 constexpr DWORD dismiss_poll_ms = 15, dismiss_delay_ms = 50;
-constexpr int get_choices = 0x24;
 constexpr int no_track = -1;
-constexpr int playing = 2, paused = 3;  // input_state_e in VLC 3.0.24.
 constexpr char subtitle_description[] = "sub-description";
 constexpr COLORREF dark_panel = RGB(15, 15, 15), light_panel = RGB(194, 193, 193);
 constexpr COLORREF accent = RGB(211, 121, 24);
 
-using InputRef = std::unique_ptr<Input, decltype(&vlc_object_release)>;
 using AudioOutputRef = std::unique_ptr<AudioOutput, decltype(&vlc_object_release)>;
 
 struct DroppedSubtitles {
@@ -202,18 +165,10 @@ std::wstring from_utf8(const char *label) {
     return result;
 }
 
-struct Choices {
-    VlcValue ids{}, labels{};
-    ~Choices() {
-        if (ids.list)
-            var_FreeList(&ids, &labels);
-    }
-};
-
 std::vector<Track> media_tracks(Input *input, const char *variable) {
-    Choices choices;
+    const VlcChoices choices(input, variable);
     std::vector<Track> tracks;
-    if (!input || var_Change(input, variable, get_choices, &choices.ids, &choices.labels))
+    if (!choices.ids.list)
         return tracks;
     for (int i = 0; i < choices.ids.list->count; ++i) {
         const auto id = choices.ids.list->values[i].integer;
@@ -258,6 +213,8 @@ std::vector<AudioDevice> audio_devices(AudioOutput *output) {
 
 class EmbeddedTracks {
 public:
+    explicit EmbeddedTracks(LibVlcRef &library) : library_(library) {}
+
     void set_input(Input *input) {
         if (media_)
             libvlc_media_parse_stop(media_.get());
@@ -271,10 +228,8 @@ public:
             return;
 
         // Read the file's metadata without opening a second player or loading subtitle sidecars.
-        if (!library_) {
-            const char *opts[] = {"--ignore-config", "--no-media-library", "--no-sub-autodetect-file", "--intf=dummy"};
-            library_.reset(libvlc_new(4, opts));
-        }
+        if (!library_)
+            library_.reset(new_metadata_library());
         if (library_)
             media_.reset(libvlc_media_new_location(library_.get(), uri.get()));
         if (media_ && libvlc_media_parse_with_options(media_.get(), 0, 2500))
@@ -312,8 +267,8 @@ public:
 
 private:
     struct Entry { int id, type; };
-    std::unique_ptr<LibVlc, decltype(&libvlc_release)> library_{nullptr, libvlc_release};
-    std::unique_ptr<Media, decltype(&libvlc_media_release)> media_{nullptr, libvlc_media_release};
+    LibVlcRef &library_;
+    MediaRef media_{nullptr, libvlc_media_release};
     std::optional<std::vector<Entry>> entries_;
 };
 
@@ -945,11 +900,6 @@ SubtitleRequest local_subtitle(std::wstring_view path, std::wstring_view label =
     return std::make_shared<LocalSubtitle>(LocalSubtitle{std::move(uri), std::wstring(name)});
 }
 
-bool active_playback(Input *input) {
-    VlcValue state{};
-    return input && var_Get(input, "state", &state) == 0 && (state.integer == playing || state.integer == paused);
-}
-
 InputRef drop_input() {
     const auto interface = context_interface.load();
     if (!interface || !redesign_is_selected(interface->libvlc))
@@ -1226,6 +1176,26 @@ bool handle_hide_ui_shortcut(const MSG &message) {
     return true;
 }
 
+bool handle_playback_sidebar(const MSG &message) {
+    if (message.message == WM_LBUTTONDOWN || message.message == WM_LBUTTONDBLCLK ||
+        message.message == WM_LBUTTONUP) {
+        subtitle_preferences::Player player{};
+        const HWND surface = fullscreen_owner(message.hwnd);
+        if (surface || context_player(message.hwnd)) {
+            if (auto button = subtitles_button(message.hwnd)) {
+                OffsetRect(&*button, 42, 0);
+                const POINT cursor{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+                const auto interface = context_interface.load();
+                if (PtInRect(&*button, cursor) && interface && redesign_is_selected(interface->libvlc))
+                    player = {interface->libvlc, interface->parent};
+            }
+        }
+        if (preferences_sidebar::handle_gear(message, player, surface))
+            return true;
+    }
+    return preferences_sidebar::handle_message(message);
+}
+
 bool handle_video_context_event(const MSG &message) {
     const bool keyboard = message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN;
     const bool right_click = message.message == WM_RBUTTONDOWN || message.message == WM_RBUTTONDBLCLK ||
@@ -1264,7 +1234,7 @@ bool handle_video_context_event(const MSG &message) {
 LRESULT CALLBACK video_events_from_queue(int code, WPARAM removal, LPARAM data) {
     if (code == HC_ACTION && removal == PM_REMOVE) {
         auto &message = *reinterpret_cast<MSG *>(data);
-        if (handle_video_context_event(message))
+        if (preferences_sidebar::handle_video_event(message) || handle_video_context_event(message))
             message.message = WM_NULL;
     }
     return CallNextHookEx(nullptr, code, removal, data);
@@ -1292,8 +1262,11 @@ LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
             const auto interface = context_interface.load();
             if (interface && redesign_is_selected(interface->libvlc) && subtitle_drop_window(message.hwnd))
                 subtitle_drop::install(message.hwnd, can_drop_subtitles, queue_dropped_subtitles);
+        } else if (preferences_sidebar::owns_input_target(message.hwnd)) {
+            if (preferences_sidebar::handle_message(message))
+                message.message = WM_NULL;
         } else if (add_subtitles::handle_key(message) || context_menu::handle_message(message) ||
-                   handle_hide_ui_shortcut(message) || handle_context_click(message) ||
+                   handle_playback_sidebar(message) || handle_hide_ui_shortcut(message) || handle_context_click(message) ||
                    handle_playlist_button(message)) {
             message.message = WM_NULL;
         } else {
@@ -1355,7 +1328,9 @@ private:
     SubtitleRequest attempted_local_subtitle_;
     std::optional<PendingSubtitle> pending_local_subtitle_;
     std::vector<LoadedSubtitle> loaded_local_subtitles_;
-    EmbeddedTracks embedded_;
+    LibVlcRef metadata_library_{nullptr, libvlc_release};
+    EmbeddedTracks embedded_{metadata_library_};
+    subtitle_defaults::AutoSelect subtitle_defaults_;
     std::vector<Track> tracks_, external_tracks_;
     int embedded_rows_ = min_embedded_rows;
     std::int64_t selected_track_ = no_track;
@@ -1558,6 +1533,12 @@ private:
     }
 
     void refresh() {
+        if (const auto interface = context_interface.load()) {
+            const subtitle_preferences::Player player{interface->libvlc, interface->parent};
+            subtitle_preferences::reset_duration_on_media_change(player);
+            if (redesign_is_selected(player.vlc))
+                subtitle_defaults_.refresh(player, metadata_library_);
+        }
         refresh_local_subtitle();
         PanelWindow window;
         EnumWindows(find_panel, reinterpret_cast<LPARAM>(&window));
@@ -1721,10 +1702,9 @@ private:
         pending_local_subtitle_.emplace(PendingSubtitle{
             subtitle, std::move(tracks), {previous.string, libvlc_free}, GetTickCount64() + 10000});
         description.string = name.data();
-        // INPUT_ADD_SLAVE and SLAVE_TYPE_SPU in VLC 3.0.24.
-        constexpr int add_subtitle = 0x24, subtitle_type = 0;
+        constexpr int subtitle_type = 0;  // SLAVE_TYPE_SPU in VLC 3.0.24.
         if (var_Set(local_input_.get(), subtitle_description, description) ||
-            input_Control(local_input_.get(), add_subtitle, subtitle_type, subtitle->uri.c_str(), true, dropped, true)) {
+            input_Control(local_input_.get(), input_add_slave, subtitle_type, subtitle->uri.c_str(), true, dropped, true)) {
             clear_pending_subtitle();
         } else {
             mark_subtitle_requested(subtitle, dropped);
@@ -2068,6 +2048,7 @@ int open_panel(VlcInterface *interface) {
         return -1;
     if (redesign_is_selected(interface->libvlc))
         player_window::restore_startup_bounds(interface->libvlc);
+    subtitle_preferences::use_saved_style({interface->libvlc, interface->parent});
     context_interface.store(interface);
     if (!panel->start()) {
         context_interface.store(nullptr);
@@ -2081,11 +2062,13 @@ void close_panel(VlcInterface *) {
     context_interface.store(nullptr);
     delete active_panel;
     active_panel = nullptr;
+    subtitle_preferences::release_media();
 }
 
 enum ModuleProperty {
-    create_module = 0, capability = 0x102, score = 0x103, open_callback = 0x104,
-    close_callback = 0x105, name = 0x107, description = 0x109,
+    create_module = 0, create_config = 1, shortcut = 0x101, capability = 0x102, score = 0x103, open_callback = 0x104,
+    close_callback = 0x105, no_unload = 0x106, name = 0x107, description = 0x109,
+    config_name = 0x1000, config_value = 0x1001, config_description = 0x100c,
 };
 }
 
@@ -2099,6 +2082,29 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
         set(data, module, capability, "interface") || set(data, module, score, 0) ||
         set(data, module, open_callback, "open_panel", reinterpret_cast<void *>(open_panel)) ||
         set(data, module, close_callback, "close_panel", reinterpret_cast<void *>(close_panel)))
+        return -1;
+    constexpr int config_string = 0x80;
+    void *config;
+    if (set(data, nullptr, create_config, config_string, &config) ||
+        set(data, config, config_name, subtitle_defaults::config_key) ||
+        set(data, config, config_value, "") ||
+        set(data, config, config_description, "Subtitle defaults preset", "Preferred subtitle track number and language."))
+        return -1;
+    const char *const shortcuts[] = {subtitle_preferences::text_style_filter};
+    if (set(data, nullptr, create_module, &module) ||
+        set(data, module, shortcut, std::size(shortcuts), shortcuts) ||
+        set(data, module, description, "VLC Redesign text subtitle appearance") ||
+        set(data, module, capability, "sub filter") || set(data, module, score, 0) ||
+        set(data, module, no_unload) ||
+        set(data, module, open_callback, "open_style_filter", reinterpret_cast<void *>(subtitle_preferences::open_style_filter)))
+        return -1;
+    const char *const demux_shortcuts[] = {subtitle_preferences::speed_filter};
+    if (set(data, nullptr, create_module, &module) ||
+        set(data, module, shortcut, std::size(demux_shortcuts), demux_shortcuts) ||
+        set(data, module, description, "VLC Redesign subtitle speed") ||
+        set(data, module, capability, "demux_filter") || set(data, module, score, 0) ||
+        set(data, module, open_callback, "open_speed_filter", reinterpret_cast<void *>(subtitle_preferences::open_speed_filter)) ||
+        set(data, module, close_callback, "close_speed_filter", reinterpret_cast<void *>(subtitle_preferences::close_speed_filter)))
         return -1;
     return 0;
 }

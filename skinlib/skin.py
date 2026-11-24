@@ -183,13 +183,11 @@ def skyline(ids, images, width, pad=1):
 
 
 class Layout:
-    def __init__(self, skin, window, lid, w, h, min_size=None):
-        """min_size=None makes a fixed-size layout; otherwise (minw, minh) and it can grow freely."""
+    def __init__(self, skin, window, lid, w, h, min_size=None, max_size=None):
+        """A fixed-size layout by default, with optional minimum and maximum resize bounds."""
         self.skin, self.id, self.w, self.h = skin, lid, w, h
-        if min_size:
-            minw, minh, maxw, maxh = min_size[0], min_size[1], 99999, 99999
-        else:
-            minw, maxw, minh, maxh = w, w, h, h
+        minw, minh = min_size or (w, h)
+        maxw, maxh = max_size or ((99999, 99999) if min_size else (w, h))
         self.el = E("Layout", id=lid, width=w, height=h, minwidth=minw, maxwidth=maxw,
                     minheight=minh, maxheight=maxh)
         window.add(self.el)

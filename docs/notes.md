@@ -36,7 +36,7 @@ show up to ten tracks at a time. The **Audio** tab lists output devices reported
 
 | Figma | In the skin |
 | --- | --- |
-| Player (247:445), Controls (491:1779) | Main window: 40 px top bar, rounded video area, 54 px control bar with seek fill, wedge volume (0–200 %, 100 % in the middle, as VLC maps it), equalizer, subtitles, playback and playlist buttons. Resizable. |
+| Player (247:445), Controls (491:1779) | Resizable main window with a 40 px top bar, rounded video area and 54 px control bar with seek fill, wedge volume (0-200 %, 100 % in the middle, as VLC maps it), equalizer, subtitles, preferences and playlist buttons. |
 | Player - Music (4767:23726) | With audio and no video, the cover is centred above the title; without a cover, just the title. With nothing to show, the video area is black, as in VLC. |
 | Player with sidebar (187:328), sidebar (848:1996) | Playlist layout: a rail (open files, folder, disc, network stream, media info, preferences) and a panel with shuffle, repeat (all / one), sort, load, save, remove, add, and the playlist itself, with the playing item in orange. |
 | Player - Light (2425:13624) | Every layout also comes in light. The "..." menu switches theme, and the equalizer and fullscreen bar follow. |
@@ -71,8 +71,9 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
 
 ## How it is built (and what skins2 taught)
 
-- `build.py`: the layouts. It creates three windows. `main` has six layouts (full, sidebar and
-  mini, each in dark and light). `eqwin` and `fullscreenController` have one layout per theme.
+- `build.py`: the layouts. The main player has dark and light layouts for the full player,
+  playlist and mini player. The full player and playlist also have preferences sidebar layouts.
+  The fullscreen preferences layouts hold the selected tab for the main player as well.
 - `skinlib/`: the theme.xml builder (`skin.py`, `xmlgen.py`), the drawing helpers and Figma
   icon map (`paint.py`), and the colours (`palette.py`).
 - `reference/figma/`: the Figma screenshots and page metadata the measurements came from.
@@ -110,7 +111,7 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
    minimum size, a title too long to fit (it scrolls, as VLC skins do), and a 30-item
    playlist.
 4. **By hand**, what the test cannot reach:
-   - the rest of the "..." menu and the playback menu
+   - the rest of the "..." menu and the preferences sidebar
    - fullscreen and its floating bar, which appears on mouse movement
    - dragging the window, resizing it from the right and bottom edges, and minimizing
    - dragging files onto the window, tooltips, and scrolling a long playlist

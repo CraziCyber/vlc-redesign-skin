@@ -35,6 +35,11 @@ ICONS = P.Icons()
 # The widest seek track whose fill can follow the handle (see progress()): a track this
 # wide belongs to a 5,190 px wide window. Longer only costs memory in VLC.
 MAX_TRACK = 4500
+PREFERENCES_WIDTH, PREFERENCES_TOP, PREFERENCES_BOTTOM = 444, 40, 54
+PREFERENCES_HEIGHT = 720 - PREFERENCES_TOP - PREFERENCES_BOTTOM
+PREFERENCES_MARGIN, PREFERENCES_TABS, PREFERENCES_HEADER = 10, 4, 74
+PREFERENCES_BODY_LEFT, PREFERENCES_BODY_RIGHT, PREFERENCES_BODY_BOTTOM, PREFERENCES_CORNER = 22, 14, 24, 10
+PREFERENCES_TAB_TOP = 12
 
 STOPPED, ACTIVE = "vlc.isStopped", "not vlc.isStopped"
 ART_VIEW = "not vlc.isStopped and not vlc.hasVout"
@@ -222,11 +227,12 @@ def progress(L, art, *, x0, x1, y, h, inset, r_track, r_fill, handle, anchor_l, 
 
 # --- the control bar (Figma "Controls", 491:1779) ------------------------------------
 
-def control_bar(L, art, oy, W, *, fixed, bg, last):
+def control_bar(L, art, oy, W, *, kind, bg, last):
     """The 54 px bar along the bottom. Positions are those of the Figma component: the left
     group pinned left, the right group pinned right, the seek track stretching between.
     last(x, y, anchor) draws the rightmost button."""
     t = art.t
+    fixed = kind == "fsc"
     A = (lambda a: "tl") if fixed else (lambda a: a)
     f16 = L.skin.font(16)
     base = oy + 33 - P.ascent(16)   # the Figma digits sit on y = 33 of the bar
@@ -254,8 +260,18 @@ def control_bar(L, art, oy, W, *, fixed, bg, last):
              art.icon_button("subtitles_active", 30, 32, 3, 4, original_colors=True),
              "subtitlewin.show()", "subtitlewin.hide()", "Open subtitles", "Close subtitles",
              x=W - 142, y=oy + 11, anchor=A("br"))
-    L.button(art.icon_button("playback_settings", 30, 32, 3, 4), W - 100, oy + 11, "playback_menu.show()",
-             "Playback", anchor=A("br"))
+    settings = art.icon_button("playback_settings", 30, 32, 3, 4)
+    settings_active = art.icon_button("playback_settings_active", 30, 32, 3, 4, active=True)
+    select_first = f"preferenceswin.setLayout({lid(t, 'preferences1')})"
+    if fixed:
+        L.toggle("preferenceswin.isVisible", settings, settings_active, f"{select_first};preferenceswin.show()",
+                 "preferenceswin.hide()", "Preferences", "Close preferences", x=W - 100, y=oy + 11, anchor=A("br"))
+    elif kind.endswith("_preferences"):
+        L.button(settings_active, W - 100, oy + 11, f"main.setLayout({lid(t, kind.removesuffix('_preferences'))})",
+                 "Close preferences", anchor=A("br"))
+    else:
+        L.button(settings, W - 100, oy + 11, f"{select_first};main.setLayout({lid(t, kind + '_preferences')})",
+                 "Preferences", anchor=A("br"))
     last(W - 50, oy + 11, A("br"))
 
 
@@ -265,6 +281,7 @@ def top_bar(L, art, kind):
     """Figma 'topbar' (from Player - Music, 4767:23728): 40 px with the cone, menu, sidebar
     toggle and media button on the left, the title centred, window buttons on the right."""
     t, W = art.t, L.w
+    kind = kind.removesuffix("_preferences")
     chrome = art.px("chrome")
     L.image(chrome, 0, 0, W, 40, anchor="top", resize="scale", action="move",
             action2="main.maximize()", visible="not main.isMaximized", hint="titlebar")
@@ -420,18 +437,23 @@ def sidebar(L, art):
                scrollbar=(410, ty, f"(2,{th - 20}),(2,20)", thumb, thumb_over))
 
 
-def full_layout(skin, win, t, side):
-    """The main player, 1280 x 720 by default and resizable. side=True adds the sidebar."""
-    kind = "side" if side else "full"
+def full_layout(skin, win, t, kind):
+    """The resizable main player, with an optional playlist and preferences sidebar."""
+    side = kind.removesuffix("_preferences") == "side"
+    preferences = kind.endswith("_preferences")
     W, H = 1280, 720
     L = Layout(skin, win, lid(t, kind), W, H, min_size=(1040 if side else 860, 420))     # 860: room for a 174 px seek track
     art = Art(skin, t)
     L.image(art.px("chrome"), 0, 0, W, H, anchor="fill", resize="scale", action="move", hint="bg")
+    stage_right = W - PREFERENCES_MARGIN - (PREFERENCES_WIDTH if preferences else 0)
     if side:
         sidebar(L, art)
-        stage(L, art, 427, 40, W - 10, H - 54, ("panel", "chrome", "chrome", "panel"))
+        stage(L, art, 427, 40, stage_right, H - 54, ("panel", "chrome", "chrome", "panel"))
     else:
-        stage(L, art, 10, 40, W - 10, H - 54, ("chrome",) * 4)
+        stage(L, art, 10, 40, stage_right, H - 54, ("chrome",) * 4)
+    if preferences:
+        with L.panel(stage_right, PREFERENCES_TOP, PREFERENCES_WIDTH, PREFERENCES_HEIGHT, anchor="right"):
+            preferences_sidebar(L, art, windowed=True)
     top_bar(L, art, kind)
 
     def last(x, y, anchor):
@@ -441,7 +463,7 @@ def full_layout(skin, win, t, side):
         else:
             L.button(art.icon_button("lists", 30, 32, 3, 4), x, y,
                      f"main.setLayout({lid(t, 'side')})", "Show playlist", anchor=anchor)
-    control_bar(L, art, H - 54, W, fixed=False, last=last,
+    control_bar(L, art, H - 54, W, kind=kind, last=last,
                 bg=lambda x0, y0, x1, y1: P.solid(x1 - x0, y1 - y0, t["chrome"]))
     add_skin_commands(L, t, art.px("chrome"))
 
@@ -599,6 +621,71 @@ def tracks_layout(skin, win, t, page):
     return L
 
 
+# --- preferences -------------------------------------------------------------------
+
+def preferences_sidebar(L, art, *, windowed):
+    """Draw the same right-side panel in the player and over fullscreen video."""
+    t = art.t
+    W, H = PREFERENCES_WIDTH, PREFERENCES_HEIGHT
+    frame = "stage" if t is DARK else "card_outer"
+    left, right, bottom = PREFERENCES_BODY_LEFT, PREFERENCES_BODY_RIGHT, H - PREFERENCES_BODY_BOTTOM
+    body_width = W - left - right
+    tab_width = body_width // PREFERENCES_TABS
+    tab_height, baseline, font_size = PREFERENCES_HEADER - 14, 37, 13
+    tab_colors = ("text", "text_hi", "text")
+    radius = PREFERENCES_CORNER
+
+    L.image(art.px(frame), 0, 0, W, H, anchor="left", resize="scale", hint="preferencesFrame")
+    L.image(art.px("panel"), left, PREFERENCES_HEADER, body_width, bottom - radius - PREFERENCES_HEADER,
+            anchor="left", resize="scale", hint="preferencesBody")
+    L.image(art.get("preferences.bodyEnd", lambda: P.rrect(body_width, 2 * radius,
+                (0, 0, body_width, 2 * radius), radius, t["panel"]).crop((0, radius, body_width, 2 * radius)),
+                frame), left, bottom - radius, anchor="bl")
+    L.image(art.px("divider"), left, PREFERENCES_HEADER, body_width, 1, resize="scale")
+
+    def draw_tab(color):
+        return P.text(P.blank(tab_width, tab_height), tab_width // 2, baseline,
+                      "Tab", font_size, t[color], align="center")
+
+    tabs = art.states("preferences.tab", draw_tab, tuple((color,) for color in tab_colors), frame)
+    label = "Subtitles"
+    icon_slot = 24 + 8
+    icon_x = (tab_width - icon_slot - P.text_width(label, font_size)) // 2
+
+    def subtitles_tab(icon, *, highlighted=False):
+        return art.labelled_button(f"preferences.tab.{icon}", icon, label, tab_width, tab_height,
+                                   icon_x, 20, icon_x + icon_slot, baseline, font_size, frame,
+                                   colors=tab_colors, original_colors=highlighted)
+
+    for number in range(1, PREFERENCES_TABS + 1):
+        x = left + (PREFERENCES_TABS - number) * tab_width
+        page = lid(t, f"preferences{number}")
+        action, selected = f"preferenceswin.setLayout({page})", f"{page}.isActive"
+        if number == 1:
+            L.toggle(selected, subtitles_tab("subtitles"), subtitles_tab("subtitles_outline_active", highlighted=True),
+                     action, action, label, label, x=x, y=PREFERENCES_TAB_TOP, hint="preferencesTab")
+        else:
+            L.button(tabs, x, PREFERENCES_TAB_TOP, action, f"Tab {number}", hint="preferencesTab")
+        L.image(art.px("accent"), x + 4, PREFERENCES_HEADER - 2, tab_width - 8, 2, resize="scale",
+                visible=selected, hint="preferencesUnderline")
+
+    if windowed:
+        for corner, y in (("tr", 0), ("br", H - 8)):
+            mask = art.get(f"corner.{corner}.8.chrome", lambda c=corner: P.corner(8, t["chrome"], c), frame)
+            L.image(mask, W - 8, y, anchor=corner, hint="corner")
+
+
+def preferences_layout(skin, win, t, number):
+    W, H = PREFERENCES_WIDTH, PREFERENCES_HEIGHT
+    L = Layout(skin, win, lid(t, f"preferences{number}"), W, H, min_size=(W, 220), max_size=(W, 99999))
+    art = Art(skin, t)
+    preferences_sidebar(L, art, windowed=False)
+    add_skin_commands(L, t, art.px("stage"))
+    # The Windows module uses the corner to resize the panel to the fullscreen stage.
+    L.image(art.px("stage" if t is DARK else "card_outer"), W - 12, H - 12, 12, 12,
+            anchor="br", resize="scale", action="resizeSE", hint="gripSE")
+
+
 # --- fullscreen controller ----------------------------------------------------------
 
 def fsc_layout(skin, win, t):
@@ -613,7 +700,7 @@ def fsc_layout(skin, win, t):
     def last(x, y, anchor):
         L.button(art.icon_button("fullscreen_exit", 30, 32, 3, 4), x, y, "vlc.fullscreen()", "Leave fullscreen",
                  anchor=anchor)
-    control_bar(L, art, 1, W, fixed=True, last=last, bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)))
+    control_bar(L, art, 1, W, kind="fsc", last=last, bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)))
     add_skin_commands(L, t, art.px("chrome"))
     return L
 
@@ -621,7 +708,7 @@ def fsc_layout(skin, win, t):
 # --- menus ----------------------------------------------------------------------
 
 def menus(skin):
-    """The '...' menu (Figma 'menu', 6062:13354) per layout and the playback button's menu."""
+    """The '...' menu (Figma 'menu', 6062:13354) per player layout."""
     for t in THEMES:
         o = other(t)
         for kind in ("full", "side", "mini"):
@@ -647,25 +734,6 @@ def menus(skin):
                 None,
                 ("Quit VLC\tCtrl+Q", "vlc.quit()"),
             ])
-    skin.menu("playback_menu", [
-        ("Play\tSpace", "vlc.play()"),
-        ("Pause\tSpace", "vlc.pause()"),
-        ("Stop\tS", "vlc.stop()"),
-        ("Previous Item\tP", "playlist.previous()"),
-        ("Next Item\tN", "playlist.next()"),
-        None,
-        ("Faster\t]", "vlc.faster()"),
-        ("Slower\t[", "vlc.slower()"),
-        ("Next Frame\tE", "vlc.nextFrame()"),
-        None,
-        ("Take Snapshot\tShift+S", "vlc.snapshot()"),
-        ("Record\tShift+R", "vlc.toggleRecord()"),
-        None,
-        ("Video...", "dialogs.videoPopup()"),
-        ("Audio...", "dialogs.audioPopup()"),
-        ("Subtitle and More...", "dialogs.popup()"),
-        ("More Settings...", "dialogs.prefs()"),
-    ])
 
 
 # --- build -------------------------------------------------------------------------
@@ -691,14 +759,17 @@ def build(start="dark_full", show_eq=False, preview_fsc=False, *, dist_dir=None)
     # skins2 starts each window on the layout added last
     start_t = DARK if start.startswith("dark") else LIGHT
     main = skin.window("main", position="Center", dragdrop="true", playondrop="true")
-    order = [(t, k) for t in THEMES for k in MAIN_KINDS if lid(t, k) != start] + [(start_t, start.split("_")[1])]
+    kinds = (*MAIN_KINDS, "full_preferences", "side_preferences")
+    order = [(t, k) for t in THEMES for k in kinds if lid(t, k) != start] + [(start_t, start.split("_")[1])]
     for t, kind in order:
         if kind == "mini":
             mini_layout(skin, main, t)
         else:
-            full_layout(skin, main, t, kind == "side")
+            full_layout(skin, main, t, kind)
     eq = skin.window("eqwin", visible="true" if show_eq else "false", position="Center")
     subtitles = skin.window("subtitlewin", visible="false", position="Center")
+    # The hidden window's active layout also holds the selected tab in the windowed player.
+    preferences = skin.window("preferenceswin", visible="false", position="NorthEast", xmargin=10, ymargin=40)
     fsc = (skin.window("fscpreview", position="Center") if preview_fsc else
            skin.window("fullscreenController", position="South", ymargin="3%"))
     for t in (other(start_t), start_t):
@@ -706,6 +777,8 @@ def build(start="dark_full", show_eq=False, preview_fsc=False, *, dist_dir=None)
         tracks_layout(skin, subtitles, t, "video")
         tracks_layout(skin, subtitles, t, "audio")
         tracks_layout(skin, subtitles, t, "subtitles")
+        for number in range(1, PREFERENCES_TABS + 1):
+            preferences_layout(skin, preferences, t, number)
         fsc_layout(skin, fsc, t)
 
     skin.write()
