@@ -21,11 +21,14 @@ constexpr int inset = 20, label_inset = 24, field_width = 142, toggle_width = 68
 constexpr int preset_height = 46, preset_list_height = 300, dropdown_radius = 6;
 constexpr int sync_y = 292, filters_y = 476, compressor_y = 756, spatializer_y = 881;
 constexpr int widener_y = 1006, pitch_y = 1131, content_height = 1229;
-constexpr int expand_y = filters_y + 154, expand_height = 48, two_pass_y = filters_y + 220;
-constexpr int gain_inset = 16, gain_spacing = 90, gain_start = expand_y + 60;
+constexpr int expand_height = 48, detail_inset = 16, slider_units = 10;
+constexpr int equalizer_expand_y = filters_y + 154, compressor_expand_y = compressor_y + 57;
+constexpr int gain_spacing = 90, gain_start = equalizer_expand_y + 60;
+constexpr int compressor_spacing = 76, compressor_start = compressor_expand_y + 87;
 constexpr int gain_count = std::size(EqualizerGains{});
-constexpr int expanded_space = gain_start + (gain_count - 1) * gain_spacing + 88 - (expand_y + expand_height);
-constexpr int gain_units = 10;
+constexpr int compressor_count = std::size(compressor_parameters);
+constexpr int equalizer_height = 60 + (gain_count - 1) * gain_spacing + 88;
+constexpr int compressor_height = 87 + (compressor_count - 1) * compressor_spacing + 47;
 constexpr UINT_PTR refresh_timer = 1;
 constexpr auto defaults_kind = track_defaults::Kind::audio;
 
@@ -33,11 +36,32 @@ enum Control {
     audio_track = 201, audio_language, stereo_test, stereo_mode, delay, delay_slider,
     equalizer, expand_equalizer, two_pass, compressor, expand_compressor, spatializer,
     expand_spatializer, widener, expand_widener, pitch_slider, choices, preset_choices, first_gain = 220,
+    first_compressor_slider = 250,
 };
 constexpr Control gain_edit(int index) { return static_cast<Control>(first_gain + 2 * index); }
 constexpr Control gain_slider(int index) { return static_cast<Control>(first_gain + 2 * index + 1); }
 constexpr bool is_gain(int id) { return id >= first_gain && id < first_gain + 2 * gain_count; }
 constexpr int gain_index(int id) { return (id - first_gain) / 2; }
+constexpr Control compressor_slider(int index) { return static_cast<Control>(first_compressor_slider + index); }
+constexpr bool is_compressor_slider(int id) { return id >= first_compressor_slider && id < first_compressor_slider + compressor_count; }
+constexpr int compressor_index(int id) { return id - first_compressor_slider; }
+
+enum class Section { equalizer, compressor, page };
+struct SectionLayout {
+    Control header, first_slider;
+    int y, height;
+};
+constexpr SectionLayout sections[] = {
+    {expand_equalizer, gain_slider(0), equalizer_expand_y, equalizer_height},
+    {expand_compressor, compressor_slider(0), compressor_expand_y, compressor_height},
+};
+
+Section section_for(Control header) {
+    for (std::size_t i = 0; i < std::size(sections); ++i)
+        if (sections[i].header == header)
+            return static_cast<Section>(i);
+    return Section::page;
+}
 
 enum class Type { edit, button, slider, expand };
 struct Row {
@@ -45,8 +69,9 @@ struct Row {
     const wchar_t *caption;
     int y, height, width;  // Zero width fills the row.
     Type type = Type::button;
+    Section section = Section::page;
 };
-constexpr Row top_rows[] = {
+constexpr Row page_rows[] = {
     {audio_track, L"Audio Track", 57, 36, field_width, Type::edit},
     {audio_language, L"Audio Language", 110, 36, field_width, Type::edit},
     {stereo_test, L"Test", 171, 34, toggle_width},
@@ -54,12 +79,10 @@ constexpr Row top_rows[] = {
     {delay, L"Audio Track Delay", sync_y + 59, 36, field_width, Type::edit},
     {delay_slider, L"Audio Track Delay", sync_y + 109, 31, 0, Type::slider},
     {equalizer, L"Equalizer", filters_y + 96, 48, 0},
-    {expand_equalizer, L"Expand Settings", expand_y, expand_height, 0, Type::expand},
-};
-constexpr Row bottom_rows[] = {
-    {two_pass, L"2 Pass", two_pass_y, 32, toggle_width},
+    {expand_equalizer, L"Expand Settings", equalizer_expand_y, expand_height, 0, Type::expand},
+    {two_pass, L"2 Pass", filters_y + 220, 32, toggle_width},
     {compressor, L"Compressor", compressor_y + 14, 32, toggle_width},
-    {expand_compressor, L"Expand Settings", compressor_y + 57, 48, 0, Type::expand},
+    {expand_compressor, L"Expand Settings", compressor_expand_y, expand_height, 0, Type::expand},
     {spatializer, L"Spatializer", spatializer_y + 14, 32, toggle_width},
     {expand_spatializer, L"Expand Settings", spatializer_y + 57, 48, 0, Type::expand},
     {widener, L"Stereo Widener", widener_y + 14, 32, toggle_width},
@@ -70,17 +93,24 @@ constexpr const wchar_t *gain_labels[gain_count] = {
     L"Preamp", L"60 Hz", L"170 Hz", L"310 Hz", L"600 Hz", L"1 kHz", L"3 kHz", L"6 kHz", L"12 kHz", L"14 kHz", L"16 kHz"
 };
 constexpr auto rows = [] {
-    std::array<Row, std::size(top_rows) + 2 * gain_count + std::size(bottom_rows)> result{};
+    std::array<Row, std::size(page_rows) + 2 * gain_count + compressor_count> result{};
     auto row = result.begin();
-    for (const auto &entry : top_rows)
+    for (const auto &entry : page_rows) {
         *row++ = entry;
-    for (int i = 0; i < gain_count; ++i) {
-        const int y = gain_start + i * gain_spacing;
-        *row++ = {gain_edit(i), gain_labels[i], y, 32, 138, Type::edit};
-        *row++ = {gain_slider(i), gain_labels[i], y + 41, 30, 0, Type::slider};
+        if (entry.id == expand_equalizer) {
+            for (int i = 0; i < gain_count; ++i) {
+                const int y = gain_start + i * gain_spacing;
+                *row++ = {gain_edit(i), gain_labels[i], y, 32, 138, Type::edit, Section::equalizer};
+                *row++ = {gain_slider(i), gain_labels[i], y + 41, 30, 0, Type::slider, Section::equalizer};
+            }
+        }
+        if (entry.id == expand_compressor) {
+            for (int i = 0; i < compressor_count; ++i) {
+                *row++ = {compressor_slider(i), compressor_parameters[i].label, compressor_start + i * compressor_spacing,
+                          30, 0, Type::slider, Section::compressor};
+            }
+        }
     }
-    for (const auto &entry : bottom_rows)
-        *row++ = entry;
     return result;
 }();
 constexpr const wchar_t *stereo_modes[] = {
@@ -167,10 +197,10 @@ public:
     View(VlcPlayer player, bool light_theme)
         : player_(player), colors_(light_theme ? light : dark), defaults_(track_defaults::load(player, defaults_kind)),
           presets_(equalizer_presets(player)) {
-        gain_colors_ = colors_;
-        gain_colors_.panel = colors_.button;
+        detail_colors_ = colors_;
+        detail_colors_.panel = colors_.button;
         if (!light_theme)
-            gain_colors_.track = RGB(9, 9, 9);
+            detail_colors_.track = RGB(9, 9, 9);
     }
 
     ~View() {
@@ -280,9 +310,12 @@ public:
         if (message.message != WM_KEYDOWN ||
             (message.hwnd != window_ && !IsChild(window_, message.hwnd)))
             return false;
-        if (message.wParam == VK_RETURN && message.hwnd == control(expand_equalizer)) {
-            toggle_equalizer_settings();
-            return true;
+        if (message.wParam == VK_RETURN) {
+            const auto section = section_for(static_cast<Control>(GetDlgCtrlID(message.hwnd)));
+            if (section != Section::page) {
+                toggle_section(section);
+                return true;
+            }
         }
         if (message.wParam == VK_TAB) {
             const auto focus = IsChild(window_, GetFocus()) ? GetFocus() : nullptr;
@@ -309,7 +342,7 @@ public:
 private:
     VlcPlayer player_;
     const Colors &colors_;
-    Colors gain_colors_{};
+    Colors detail_colors_{};
     track_defaults::Preset defaults_;
     std::vector<Preset> presets_;
     PresetIcons preset_icons_;
@@ -318,7 +351,8 @@ private:
     Scroll scroll_{content_height};
     HWND window_ = nullptr;
     HFONT regular_ = nullptr, section_ = nullptr, small_ = nullptr;
-    bool window_owned_ = false, slider_dirty_ = false, eq_expanded_ = false;
+    bool window_owned_ = false, slider_dirty_ = false;
+    std::array<bool, std::size(sections)> expanded_{};
     const wchar_t *defaults_notice_ = nullptr;
     std::optional<Control> edited_;
     std::optional<Control> dropdown_;
@@ -342,12 +376,12 @@ private:
         small_ = make_font(12);
         for (const auto &row : rows) {
             const bool edit = row.type == Type::edit, slider = row.type == Type::slider, gain = is_gain(row.id);
-            const bool pending = row.type == Type::expand && row.id != expand_equalizer;
+            const bool pending = row.type == Type::expand && section_for(row.id) == Section::page;
             const DWORD style = edit ? ES_AUTOHSCROLL :
                                 slider ? TBS_NOTICKS | TBS_FIXEDLENGTH | TBS_TRANSPARENTBKGND : BS_OWNERDRAW;
             const HWND child = CreateWindowExW(0, edit ? L"EDIT" : slider ? TRACKBAR_CLASSW : L"BUTTON",
                                                edit ? L"" : row.caption,
-                                               WS_CHILD | (gain ? 0 : WS_VISIBLE) | WS_CLIPSIBLINGS |
+                                               WS_CHILD | (row.section == Section::page ? WS_VISIBLE : 0) | WS_CLIPSIBLINGS |
                                                    (pending ? WS_DISABLED : WS_TABSTOP) | style,
                                                0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(row.id)),
                                                reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE)), nullptr);
@@ -358,14 +392,24 @@ private:
                 SendMessageW(child, EM_SETLIMITTEXT, 40, 0);
                 SendMessageW(child, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 1));
             } else if (slider) {
-                const int minimum = gain ? gain_units * equalizer_min_db : row.id == pitch_slider ? -120 : -10000;
-                const int maximum = gain ? gain_units * equalizer_max_db : row.id == pitch_slider ? 120 : 10000;
+                int minimum = -10000, maximum = 10000;
+                if (gain) {
+                    minimum = slider_units * equalizer_min_db;
+                    maximum = slider_units * equalizer_max_db;
+                } else if (row.id == pitch_slider) {
+                    minimum = -120;
+                    maximum = 120;
+                } else if (row.section == Section::compressor) {
+                    const auto &parameter = compressor_parameters[compressor_index(row.id)];
+                    minimum = std::lround(parameter.minimum * slider_units);
+                    maximum = std::lround(parameter.maximum * slider_units);
+                }
                 const int step = row.id == delay_slider ? 50 : 1;
                 SendMessageW(child, TBM_SETRANGEMIN, FALSE, minimum);
                 SendMessageW(child, TBM_SETRANGEMAX, FALSE, maximum);
                 SendMessageW(child, TBM_SETTHUMBLENGTH, 27, 0);
                 SendMessageW(child, TBM_SETLINESIZE, 0, step);
-                SendMessageW(child, TBM_SETPAGESIZE, 0, step * 10);
+                SendMessageW(child, TBM_SETPAGESIZE, 0, std::min(step * 10, (maximum - minimum) / 10));
             }
         }
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
@@ -388,20 +432,36 @@ private:
         return true;
     }
 
-    int eq_extra_height() const { return eq_expanded_ ? expanded_space : 0; }
+    bool is_expanded(Section section) const {
+        return section != Section::page && expanded_[static_cast<std::size_t>(section)];
+    }
+
+    int content_y(int y) const {
+        int position = y;
+        for (std::size_t i = 0; i < std::size(sections); ++i) {
+            if (expanded_[i] && y > sections[i].y)
+                position += sections[i].height - expand_height;
+        }
+        return position;
+    }
+
+    bool show_row(const Row &row) const {
+        return row.section == Section::page || is_expanded(row.section);
+    }
 
     RECT box(const Row &row, LONG width) const {
-        const bool gain = is_gain(row.id);
-        const int outer = inset + (gain ? gain_inset : 0) - (row.type == Type::slider ? 7 : 0);
-        const int shift = !gain && row.y >= two_pass_y ? eq_extra_height() : 0;
-        const LONG right = width - outer, top = row.y + shift - scroll_.offset();
+        const bool detail = row.section != Section::page;
+        const int outer = inset + (detail ? detail_inset : 0) - (row.type == Type::slider ? 7 : 0);
+        // Detail rows use their header as the anchor for shifts from earlier sections.
+        const int anchor = detail ? sections[static_cast<std::size_t>(row.section)].y : row.y;
+        const LONG right = width - outer, top = row.y + content_y(anchor) - anchor - scroll_.offset();
         return {row.width ? right - row.width : outer, top, right, top + row.height};
     }
 
     void layout() {
         const auto width = bounds().right;
         for (const auto &row : rows) {
-            if (is_gain(row.id) && !eq_expanded_)
+            if (!show_row(row))
                 continue;
             auto area = box(row, width);
             if (row.type == Type::edit) {
@@ -426,23 +486,33 @@ private:
             layout();
     }
 
-    void toggle_equalizer_settings() {
+    void toggle_section(Section section) {
         close_choices(false);
-        const auto button = control(expand_equalizer);
-        if (eq_expanded_ && IsChild(window_, GetFocus()) && is_gain(GetDlgCtrlID(GetFocus())))
-            SetFocus(button);
-        eq_expanded_ = !eq_expanded_;
-        SetWindowTextW(button, eq_expanded_ ? L"Collapse Settings" : L"Expand Settings");
-        scroll_.set_content_height(content_height + eq_extra_height());
+        const auto index = static_cast<std::size_t>(section);
+        const auto &details = sections[index];
+        const auto button = control(details.header);
+        const bool expand = !expanded_[index];
+        if (!expand) {
+            const auto focus = GetFocus();
+            for (const auto &row : rows) {
+                if (row.section == section && control(row.id) == focus) {
+                    SetFocus(button);
+                    break;
+                }
+            }
+        }
+        expanded_[index] = expand;
+        SetWindowTextW(button, expand ? L"Collapse Settings" : L"Expand Settings");
+        scroll_.set_content_height(content_y(content_height));
         scroll_.move(scroll_.offset(), bounds());
         layout();
-        for (int i = 0; i < gain_count; ++i) {
-            for (const auto id : {gain_edit(i), gain_slider(i)})
-                ShowWindow(control(id), eq_expanded_ ? SW_SHOWNOACTIVATE : SW_HIDE);
+        for (const auto &row : rows) {
+            if (row.section == section)
+                ShowWindow(control(row.id), expand ? SW_SHOWNOACTIVATE : SW_HIDE);
         }
-        if (eq_expanded_) {
-            refresh_gains();
-            show_control(control(gain_slider(0)));
+        if (expand) {
+            refresh();
+            show_control(control(details.first_slider));
         }
     }
 
@@ -465,28 +535,38 @@ private:
         const auto right = area.right - inset;
         const auto right_of_label = right - field_width - 8;
         fill(dc, area, colors_.panel);
-        const int extra = eq_extra_height();
-        for (const auto divider : {sync_y, filters_y, compressor_y + extra, spatializer_y + extra, widener_y + extra,
-                                  pitch_y + extra, content_height + extra - 1})
-            fill(dc, {0, divider - y, area.right, divider - y + 1}, colors_.edge);
-        if (eq_expanded_)
-            round_rect(dc, {inset, expand_y - y, right, expand_y + expand_height + extra - y}, 6, gain_colors_.panel);
+        for (const int divider : {sync_y, filters_y, compressor_y, spatializer_y, widener_y, pitch_y, content_height - 1}) {
+            const int line = content_y(divider) - y;
+            fill(dc, {0, line, area.right, line + 1}, colors_.edge);
+        }
+        for (std::size_t i = 0; i < std::size(sections); ++i) {
+            if (expanded_[i]) {
+                const int top = content_y(sections[i].y) - y;
+                round_rect(dc, {inset, top, right, top + sections[i].height}, 6, detail_colors_.panel);
+            }
+        }
         text(dc, L"Defaults", {label_inset, 14 - y, right, 45 - y}, section_, colors_.heading);
         text(dc, L"Synchronization", {label_inset, sync_y + 13 - y, right, sync_y + 48 - y}, section_, colors_.heading);
         text(dc, L"Filters", {label_inset, filters_y + 13 - y, right, filters_y + 48 - y}, section_, colors_.heading);
         if (defaults_notice_)
             text(dc, defaults_notice_, {label_inset, 146 - y, right, 170 - y}, small_, colors_.dim);
         for (const auto &row : rows) {
-            const bool gain = is_gain(row.id);
-            if (gain && !eq_expanded_)
+            if (!show_row(row))
                 continue;
             const auto field = box(row, area.right);
-            if (row.type == Type::edit) {
-                const int left = gain ? inset + gain_inset : label_inset;
+            if (row.section == Section::compressor) {
+                const int index = compressor_index(row.id);
+                const RECT labels{inset + detail_inset, field.top - 33, right - detail_inset, field.top - 7};
+                const auto value = number_text(settings_.compressor_values[index], 1, compressor_parameters[index].suffix, true);
+                text(dc, row.caption, labels, regular_, colors_.dim);
+                text(dc, value.c_str(), labels, regular_, colors_.dim, DT_RIGHT);
+            } else if (row.type == Type::edit) {
+                const bool gain = is_gain(row.id);
+                const int left = gain ? inset + detail_inset : label_inset;
                 text(dc, row.caption, {left, field.top, field.left - 8, field.bottom},
                      regular_, gain ? colors_.dim : colors_.text);
                 if (gain) {
-                    round_rect(dc, field, 4, gain_colors_.track);
+                    round_rect(dc, field, 4, detail_colors_.track);
                 } else {
                     round_rect(dc, field, 6, colors_.edge);
                     auto interior = field;
@@ -504,7 +584,8 @@ private:
         text(dc, L"-10 s", ticks, small_, colors_.dim);
         text(dc, L"0 s", ticks, small_, colors_.dim, DT_CENTER);
         text(dc, L"+10 s", ticks, small_, colors_.dim, DT_RIGHT);
-        const RECT pitch{label_inset, pitch_y + extra + 12 - y, right, pitch_y + extra + 46 - y};
+        const int pitch_top = content_y(pitch_y) - y;
+        const RECT pitch{label_inset, pitch_top + 12, right, pitch_top + 46};
         text(dc, L"Adjust Pitch", pitch, regular_, colors_.text);
         text(dc, number_text(settings_.pitch, 1, L" semitones", true).c_str(), pitch, regular_, colors_.text, DT_RIGHT);
         if (scroll_.limit(area))
@@ -538,10 +619,10 @@ private:
             return;
         }
         const bool dropdown = id == stereo_mode || id == equalizer;
-        const bool expanded = id == expand_equalizer && eq_expanded_;
-        round_rect(dc, area, 6, expanded ? gain_colors_.panel : colors_.track);
+        const bool expanded = is_expanded(section_for(id));
+        round_rect(dc, area, 6, expanded ? detail_colors_.panel : colors_.track);
         if (expanded)
-            fill(dc, {area.left, area.top + 6, area.right, area.bottom}, gain_colors_.panel);
+            fill(dc, {area.left, area.top + 6, area.right, area.bottom}, detail_colors_.panel);
         if (dropdown) {
             InflateRect(&area, -2, -2);
             round_rect(dc, area, 4, (item.itemState & ODS_SELECTED) ? colors_.hover : colors_.button);
@@ -607,19 +688,23 @@ private:
             SetWindowTextW(child, label.c_str());
     }
 
+    void set_slider_position(Control id, int position) const {
+        const auto slider = control(id);
+        if (SendMessageW(slider, TBM_GETPOS, 0, 0) != position)
+            SendMessageW(slider, TBM_SETPOS, TRUE, position);
+    }
+
     void refresh_gains() {
         for (int i = 0; i < gain_count; ++i) {
-            const int position = std::lround(settings_.gains[i] * gain_units);
-            set_unfocused_text(control(gain_edit(i)), number_text(position / double(gain_units), 1, L" dB", true));
-            const auto slider = control(gain_slider(i));
-            if (SendMessageW(slider, TBM_GETPOS, 0, 0) != position)
-                SendMessageW(slider, TBM_SETPOS, TRUE, position);
+            const int position = std::lround(settings_.gains[i] * slider_units);
+            set_unfocused_text(control(gain_edit(i)), number_text(position / double(slider_units), 1, L" dB", true));
+            set_slider_position(gain_slider(i), position);
         }
     }
 
     bool change_gain(int index, double value) {
         const double bounded = std::clamp(value, double(equalizer_min_db), double(equalizer_max_db));
-        const float step = std::lround(bounded * gain_units) / float(gain_units);
+        const float step = std::lround(bounded * slider_units) / float(slider_units);
         if (step == settings_.gains[index])
             return false;
         auto gains = settings_.gains;
@@ -636,18 +721,20 @@ private:
         const int choice = equalizer_choice();
         const auto preset = choice > 0 ? wstring(presets_[choice - 1].label) : std::wstring(choice == 0 ? L"None" : L"Custom");
         set_button_text(equalizer, preset);
-        if (eq_expanded_)
+        if (is_expanded(Section::equalizer))
             refresh_gains();
+        if (is_expanded(Section::compressor)) {
+            for (int i = 0; i < compressor_count; ++i)
+                set_slider_position(compressor_slider(i), std::lround(settings_.compressor_values[i] * slider_units));
+            if (old.compressor_values != settings_.compressor_values)
+                InvalidateRect(window_, nullptr, FALSE);
+        }
         const double seconds = settings_.delay.value_or(0);
         set_unfocused_text(control(delay), number_text(seconds, 3, L" s", true));
         const int delay_position = std::lround(std::clamp(seconds, -10.0, 10.0) * 1000);
         const int pitch_position = std::lround(std::clamp(settings_.pitch, -12.0f, 12.0f) * 10);
-        for (const auto id : {delay_slider, pitch_slider}) {
-            const int position = id == delay_slider ? delay_position : pitch_position;
-            const auto slider = control(id);
-            if (SendMessageW(slider, TBM_GETPOS, 0, 0) != position)
-                SendMessageW(slider, TBM_SETPOS, TRUE, position);
-        }
+        set_slider_position(delay_slider, delay_position);
+        set_slider_position(pitch_slider, pitch_position);
         for (const auto id : {delay, delay_slider})
             if (bool(IsWindowEnabled(control(id))) != settings_.delay.has_value())
                 EnableWindow(control(id), settings_.delay.has_value());
@@ -809,7 +896,8 @@ private:
             open_choices(id, labels, equalizer_choice());
             return false;
         }
-        case expand_equalizer: toggle_equalizer_settings(); return false;
+        case expand_equalizer:
+        case expand_compressor: toggle_section(section_for(id)); return false;
         case two_pass: set_two_pass(player_, !settings_.two_pass); return true;
         case compressor: set_filter(player_, Filter::compressor, !settings_.compressor); return true;
         case spatializer: set_filter(player_, Filter::spatializer, !settings_.spatializer); return true;
@@ -895,7 +983,8 @@ private:
             const auto slider = reinterpret_cast<HWND>(lp);
             const auto id = GetDlgCtrlID(slider);
             const auto position = SendMessageW(slider, TBM_GETPOS, 0, 0);
-            const bool gain = eq_expanded_ && is_gain(id) && id == gain_slider(gain_index(id));
+            const bool gain = is_expanded(Section::equalizer) && is_gain(id) && id == gain_slider(gain_index(id));
+            const bool compressor = is_expanded(Section::compressor) && is_compressor_slider(id);
             if (id == delay_slider && IsWindowEnabled(slider))
                 set_delay(player_, position / 1000.0);
             if (id == pitch_slider) {
@@ -906,8 +995,16 @@ private:
                 }
             }
             if (gain)
-                slider_dirty_ |= change_gain(gain_index(id), position / double(gain_units));
-            if ((gain || id == pitch_slider) && LOWORD(wp) != TB_THUMBTRACK)
+                slider_dirty_ |= change_gain(gain_index(id), position / double(slider_units));
+            if (compressor) {
+                const int index = compressor_index(id);
+                const float value = position / float(slider_units);
+                if (value != settings_.compressor_values[index]) {
+                    set_compressor_value(player_, compressor_parameters[index], value);
+                    slider_dirty_ = true;
+                }
+            }
+            if ((gain || compressor || id == pitch_slider) && LOWORD(wp) != TB_THUMBTRACK)
                 save_slider_settings();
             refresh();
             return 0;
@@ -923,8 +1020,9 @@ private:
         case WM_NOTIFY: {
             const auto note = reinterpret_cast<NMHDR *>(lp);
             if (note->code == NM_CUSTOMDRAW) {
-                if (is_gain(static_cast<int>(note->idFrom)))
-                    return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), gain_colors_, false,
+                const int id = static_cast<int>(note->idFrom);
+                if (is_gain(id) || is_compressor_slider(id))
+                    return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), detail_colors_, false,
                                        &colors_ == &dark ? RGB(171, 99, 20) : colors_.accent);
                 return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), colors_, true);
             }
@@ -941,7 +1039,7 @@ private:
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC: {
             const auto dc = reinterpret_cast<HDC>(wp);
-            const auto background = is_gain(GetDlgCtrlID(reinterpret_cast<HWND>(lp))) ? gain_colors_.track : colors_.track;
+            const auto background = is_gain(GetDlgCtrlID(reinterpret_cast<HWND>(lp))) ? detail_colors_.track : colors_.track;
             SetTextColor(dc, message == WM_CTLCOLOREDIT ? colors_.text : colors_.dim);
             SetBkColor(dc, background);
             SetDCBrushColor(dc, background);
