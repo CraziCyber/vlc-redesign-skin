@@ -2,7 +2,8 @@
 #define NOMINMAX
 #define UNICODE
 #include "subtitle_preferences_view.hpp"
-#include "subtitle_defaults.hpp"
+#include "preferences_widgets.hpp"
+#include "track_defaults.hpp"
 
 #include <commctrl.h>
 #include <commdlg.h>
@@ -20,6 +21,7 @@ namespace subtitle_preferences_view {
 namespace {
 
 using namespace subtitle_preferences;
+using namespace preferences_widgets;
 constexpr wchar_t class_name[] = L"VlcRedesignSubtitlePreferences";
 constexpr int inset = 20, field_width = 142, field_height = 34, slider_height = 30;
 constexpr int sync_y = 166, appearance_y = sync_y + 371;
@@ -50,80 +52,14 @@ constexpr Slider sliders[] = {
     {duration_slider, duration, Timing::duration, sync_y + 323, 0, 20000, 200},
 };
 
-struct Colors {
-    COLORREF panel, track, edge, text, heading, dim, button, hover, knob, fill, accent;
-};
-constexpr Colors dark{RGB(15,15,15), RGB(4,4,4), RGB(38,38,38), RGB(143,143,143), RGB(212,212,212),
-                      RGB(111,111,111), RGB(27,27,27), RGB(43,43,43), RGB(63,63,63), RGB(55,31,6), RGB(211,121,24)};
-constexpr Colors light{RGB(194,193,193), RGB(222,222,222), RGB(154,154,154), RGB(54,54,54), RGB(20,20,20),
-                       RGB(82,82,82), RGB(186,186,186), RGB(170,170,170), RGB(139,139,139), RGB(216,186,154), RGB(138,67,0)};
-
-void fill(HDC dc, RECT area, COLORREF color) {
-    SetDCBrushColor(dc, color);
-    FillRect(dc, &area, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-}
-
-void round_rect(HDC dc, RECT area, int radius, COLORREF color) {
-    SetDCBrushColor(dc, color);
-    const auto brush = SelectObject(dc, GetStockObject(DC_BRUSH));
-    const auto pen = SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, area.left, area.top, area.right, area.bottom, 2 * radius, 2 * radius);
-    SelectObject(dc, pen);
-    SelectObject(dc, brush);
-}
-
 COLORREF colorref(std::uint32_t rgb) {
     return RGB((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
-}
-
-std::wstring wstring(const std::string &text) {
-    const int count = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    std::wstring result(count, L'\0');
-    if (count)
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count);
-    return result;
-}
-
-std::string utf8(const wchar_t *text) {
-    const int length = static_cast<int>(std::wcslen(text));
-    const int count = WideCharToMultiByte(CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
-    std::string result(count, '\0');
-    if (count)
-        WideCharToMultiByte(CP_UTF8, 0, text, length, result.data(), count, nullptr, nullptr);
-    return result;
-}
-
-std::wstring window_text(HWND window) {
-    std::wstring text(GetWindowTextLengthW(window) + 1, L'\0');
-    const int count = GetWindowTextW(window, text.data(), static_cast<int>(text.size()));
-    text.resize(count);
-    return text;
-}
-
-std::wstring number_text(double number, int precision, std::wstring_view suffix, bool fixed = false) {
-    wchar_t buffer[64];
-    std::swprintf(buffer, std::size(buffer), L"%.*f", precision, number);
-    std::wstring text(buffer);
-    if (!fixed && precision > 0 && text.find(L'.') != std::wstring::npos) {
-        while (text.back() == L'0')
-            text.pop_back();
-        if (text.back() == L'.')
-            text.pop_back();
-    }
-    return text.append(suffix);
 }
 
 std::wstring hex_text(std::uint32_t color) {
     wchar_t text[8];
     std::swprintf(text, std::size(text), L"#%06X", static_cast<unsigned>(color & 0xffffff));
     return text;
-}
-
-std::wstring_view trim(std::wstring_view text) {
-    const auto start = text.find_first_not_of(L" \t");
-    if (start == std::wstring_view::npos)
-        return {};
-    return text.substr(start, text.find_last_not_of(L" \t") - start + 1);
 }
 
 std::optional<std::uint32_t> parse_color(std::wstring_view text) {
@@ -135,16 +71,6 @@ std::optional<std::uint32_t> parse_color(std::wstring_view text) {
     return static_cast<std::uint32_t>(std::wcstoul(std::wstring(text).c_str(), nullptr, 16));
 }
 
-std::optional<double> parse_number(std::wstring text, std::wstring_view suffix) {
-    std::replace(text.begin(), text.end(), L',', L'.');
-    wchar_t *end = nullptr;
-    const double result = std::wcstod(text.c_str(), &end);
-    const auto unit = trim(end);
-    if (end == text.c_str() || !std::isfinite(result) || (!unit.empty() && unit != trim(suffix)))
-        return std::nullopt;
-    return result;
-}
-
 bool is_edit(Control id) {
     return id == default_track || id == default_language || id == delay || id == speed || id == duration ||
            id == text_color || id == outline_color || id == offset || id == font_size || id == thickness || id == opacity;
@@ -153,7 +79,8 @@ bool is_edit(Control id) {
 class View {
 public:
     View(HWND video_owner, Player player, bool light_theme) : player_(player), colors_(light_theme ? light : dark),
-        defaults_(subtitle_defaults::load(player)), style_(appearance(player)), video_owner_(video_owner),
+        defaults_(track_defaults::load(player, track_defaults::Kind::subtitles)),
+        style_(appearance(player)), video_owner_(video_owner),
         last_pixel_size_(style_.font_pixels) {}
 
     ~View() {
@@ -202,14 +129,9 @@ public:
     bool input(const MSG &message) {
         if (modal_ || !IsWindowVisible(window_))
             return false;
-        if (message.message == WM_MOUSEWHEEL && message.hwnd != window_) {
-            RECT area{};
-            GetWindowRect(window_, &area);
-            if ((IsChild(window_, message.hwnd) ||
-                 PtInRect(&area, {GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)}))) {
-                on_wheel(GET_WHEEL_DELTA_WPARAM(message.wParam));
-                return true;
-            }
+        if (wheel_over(window_, message)) {
+            on_wheel(GET_WHEEL_DELTA_WPARAM(message.wParam));
+            return true;
         }
         if (message.message != WM_KEYDOWN ||
             (message.hwnd != window_ && !IsChild(window_, message.hwnd)))
@@ -234,12 +156,13 @@ public:
 private:
     Player player_;
     const Colors &colors_;
-    subtitle_defaults::Preset defaults_;
+    track_defaults::Preset defaults_;
     Appearance style_;
     Synchronization sync_{};
     HWND window_ = nullptr, video_owner_;
     HFONT regular_ = nullptr, section_ = nullptr, small_ = nullptr;
-    int scroll_ = 0, wheel_ = 0, thumb_grab_ = -1, last_pixel_size_;
+    Scroll scroll_{content_height};
+    int last_pixel_size_;
     bool window_owned_ = false, modal_ = false, reopen_media_ = false, save_failed_ = false;
     const wchar_t *defaults_notice_ = nullptr;
     std::optional<Control> edited_;
@@ -252,11 +175,6 @@ private:
         RECT area{};
         GetClientRect(window_, &area);
         return area;
-    }
-
-    static HFONT make_font(int height, int weight = FW_NORMAL) {
-        return CreateFontW(-height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     }
 
     bool add_control(Control id, const wchar_t *class_id, DWORD style, const wchar_t *caption = L"") {
@@ -316,7 +234,7 @@ private:
             if (id == relative)
                 right -= width + 2;
         }
-        return {right - width, y - scroll_, right, y - scroll_ + field_height};
+        return {right - width, y - scroll_.offset(), right, y - scroll_.offset() + field_height};
     }
 
     void place(Control id, const RECT &box) {
@@ -346,50 +264,20 @@ private:
             }
         }
         for (const auto &slider : sliders)
-            place(slider.id, {inset - 7, slider.y - scroll_, area.right - inset + 7, slider.y - scroll_ + slider_height});
+            place(slider.id, {inset - 7, slider.y - scroll_.offset(), area.right - inset + 7, slider.y - scroll_.offset() + slider_height});
         // During a scroll, a child can move through another control's old
         // position. Repaint the viewport and controls after all moves finish.
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
     }
 
-    int scroll_limit() const { return std::max(0, content_height - static_cast<int>(bounds().bottom)); }
-
-    void scroll_to(int y) {
-        y = std::clamp(y, 0, scroll_limit());
-        if (scroll_ != y) {
-            scroll_ = y;
-            layout();
-        }
-    }
-
     void on_wheel(int delta) {
-        wheel_ += delta;
-        scroll_to(scroll_ - 56 * (wheel_ / WHEEL_DELTA));
-        wheel_ %= WHEEL_DELTA;
-    }
-
-    RECT thumb() const {
-        const auto area = bounds();
-        const int height = std::max(1L, area.bottom - 16);
-        const int length = std::min(height, std::max(25, height * static_cast<int>(area.bottom) / content_height));
-        const int y = 8 + (height - length) * scroll_ / std::max(1, scroll_limit());
-        return {area.right - 7, y, area.right - 3, y + length};
-    }
-
-    void scroll_from_mouse(int y) {
-        const auto bar = thumb();
-        const int span = std::max(1L, bounds().bottom - 16 - (bar.bottom - bar.top));
-        scroll_to((y - 8 - thumb_grab_) * scroll_limit() / span);
+        if (scroll_.wheel(delta, bounds()))
+            layout();
     }
 
     void show_control(HWND child) {
-        RECT box{};
-        GetWindowRect(child, &box);
-        MapWindowPoints(nullptr, window_, reinterpret_cast<POINT *>(&box), 2);
-        if (box.top < 5)
-            scroll_to(scroll_ + box.top - 5);
-        else if (box.bottom > bounds().bottom - 5)
-            scroll_to(scroll_ + box.bottom - bounds().bottom + 5);
+        if (scroll_.show(window_, child, bounds()))
+            layout();
     }
 
     void move_focus(bool backwards) {
@@ -413,26 +301,18 @@ private:
         }
     }
 
-    void text(HDC dc, const wchar_t *label, RECT box, HFONT font_handle, COLORREF color, UINT align = DT_LEFT) const {
-        const auto previous = SelectObject(dc, font_handle);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, color);
-        DrawTextW(dc, label, -1, &box, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS | align);
-        SelectObject(dc, previous);
-    }
-
     void draw(HDC dc) const {
         const auto area = bounds();
         fill(dc, area, colors_.panel);
-        text(dc, L"Defaults", {inset, 17 - scroll_, area.right - inset, 45 - scroll_}, section_, colors_.heading);
+        text(dc, L"Defaults", {inset, 17 - scroll_.offset(), area.right - inset, 45 - scroll_.offset()}, section_, colors_.heading);
         if (defaults_notice_)
-            text(dc, defaults_notice_, {inset, 147 - scroll_, area.right - inset, 164 - scroll_}, small_, colors_.dim);
-        fill(dc, {0, sync_y - scroll_, area.right, sync_y - scroll_ + 1}, colors_.edge);
-        text(dc, L"Synchronization", {inset, sync_y + 17 - scroll_, area.right - inset, sync_y + 45 - scroll_},
+            text(dc, defaults_notice_, {inset, 147 - scroll_.offset(), area.right - inset, 164 - scroll_.offset()}, small_, colors_.dim);
+        fill(dc, {0, sync_y - scroll_.offset(), area.right, sync_y - scroll_.offset() + 1}, colors_.edge);
+        text(dc, L"Synchronization", {inset, sync_y + 17 - scroll_.offset(), area.right - inset, sync_y + 45 - scroll_.offset()},
              section_, colors_.heading);
         if (!sync_.active)
             text(dc, L"Play media to adjust synchronization.",
-                 {inset, sync_y + 44 - scroll_, area.right - inset, sync_y + 59 - scroll_}, small_, colors_.dim);
+                 {inset, sync_y + 44 - scroll_.offset(), area.right - inset, sync_y + 59 - scroll_.offset()}, small_, colors_.dim);
 
         for (const auto &row : rows) {
             const auto box = field_box(row.id, row.y);
@@ -446,39 +326,19 @@ private:
             }
         }
 
-        const RECT ticks{inset - 2, sync_y + 144 - scroll_, area.right - inset + 2, sync_y + 165 - scroll_};
+        const RECT ticks{inset - 2, sync_y + 144 - scroll_.offset(), area.right - inset + 2, sync_y + 165 - scroll_.offset()};
         text(dc, L"-10 s", ticks, small_, colors_.dim);
         text(dc, L"0 s", ticks, small_, colors_.dim, DT_CENTER);
         text(dc, L"+10 s", ticks, small_, colors_.dim, DT_RIGHT);
-        fill(dc, {0, appearance_y - scroll_, area.right, appearance_y - scroll_ + 1}, colors_.edge);
-        text(dc, L"Appearance", {inset, appearance_y + 11 - scroll_, area.right - inset, appearance_y + 40 - scroll_},
+        fill(dc, {0, appearance_y - scroll_.offset(), area.right, appearance_y - scroll_.offset() + 1}, colors_.edge);
+        text(dc, L"Appearance", {inset, appearance_y + 11 - scroll_.offset(), area.right - inset, appearance_y + 40 - scroll_.offset()},
              section_, colors_.heading);
         if (const auto note = save_failed_ ? L"VLC could not save these preferences." :
                              reopen_media_ ? L"Reopen the video to apply all appearance changes." : nullptr)
-            text(dc, note, {inset, appearance_y + 40 - scroll_, area.right - inset, appearance_y + 55 - scroll_},
+            text(dc, note, {inset, appearance_y + 40 - scroll_.offset(), area.right - inset, appearance_y + 55 - scroll_.offset()},
                  small_, colors_.dim);
-        if (scroll_limit())
-            round_rect(dc, thumb(), 2, colors_.knob);
-    }
-
-    void paint() const {
-        PAINTSTRUCT paint{};
-        const auto dc = BeginPaint(window_, &paint);
-        const auto area = bounds();
-        const auto memory = CreateCompatibleDC(dc);
-        const auto bitmap = memory ? CreateCompatibleBitmap(dc, area.right, area.bottom) : nullptr;
-        if (bitmap) {
-            const auto original = SelectObject(memory, bitmap);
-            draw(memory);
-            BitBlt(dc, 0, 0, area.right, area.bottom, memory, 0, 0, SRCCOPY);
-            SelectObject(memory, original);
-            DeleteObject(bitmap);
-        } else {
-            draw(dc);
-        }
-        if (memory)
-            DeleteDC(memory);
-        EndPaint(window_, &paint);
+        if (scroll_.limit(area))
+            round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
     }
 
     void draw_button(const DRAWITEMSTRUCT &item) const {
@@ -492,12 +352,7 @@ private:
             InflateRect(&box, -2, -2);
             round_rect(dc, box, 2, colorref(id == text_swatch ? style_.color : style_.outline_color));
         } else if (id == formatted) {
-            round_rect(dc, box, 7, colors_.track);
-            RECT left{3, 3, 31, box.bottom - 3}, right{34, 3, box.right - 3, box.bottom - 3};
-            round_rect(dc, left, 4, style_.formatted ? colors_.fill : colors_.knob);
-            round_rect(dc, right, 4, style_.formatted ? RGB(211,121,24) : colors_.button);
-            text(dc, style_.formatted ? L"ON" : L"OFF", style_.formatted ? left : right, small_,
-                 style_.formatted ? colors_.accent : colors_.text, DT_CENTER);
+            draw_toggle(dc, box, style_.formatted, colors_, small_);
         } else {
             const bool selected = (id == relative && !style_.font_pixels) || (id == pixels && style_.font_pixels);
             round_rect(dc, box, 6, colors_.edge);
@@ -519,38 +374,8 @@ private:
         }
     }
 
-    LRESULT draw_slider(NMCUSTOMDRAW &drawing) const {
-        if (drawing.dwDrawStage == CDDS_PREPAINT) {
-            fill(drawing.hdc, drawing.rc, colors_.panel);
-            return CDRF_NOTIFYITEMDRAW;
-        }
-        if (drawing.dwDrawStage != CDDS_ITEMPREPAINT)
-            return CDRF_DODEFAULT;
-        const auto control_window = drawing.hdr.hwndFrom;
-        RECT channel{}, handle{};
-        SendMessageW(control_window, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
-        SendMessageW(control_window, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&handle));
-        const int x = (handle.left + handle.right) / 2, y = (handle.top + handle.bottom) / 2;
-        const bool enabled = IsWindowEnabled(control_window);
-        if (drawing.dwItemSpec == TBCD_THUMB) {
-            const COLORREF color = enabled ? RGB(211,121,24) : colors_.knob;
-            round_rect(drawing.hdc, {x - 4, y - 12, x + 5, y + 12}, 4, color);
-            return CDRF_SKIPDEFAULT;
-        }
-        if (drawing.dwItemSpec == TBCD_CHANNEL) {
-            round_rect(drawing.hdc, {channel.left, y-8, channel.right, y+8}, 7, colors_.track);
-            const LONG zero = drawing.hdr.idFrom == delay_slider ? (channel.left + channel.right) / 2 : channel.left;
-            if (enabled && zero != x)
-                round_rect(drawing.hdc, {std::min<LONG>(zero, x), y-6, std::max<LONG>(zero, x), y+6}, 3, colors_.fill);
-            return CDRF_SKIPDEFAULT;
-        }
-        return CDRF_DODEFAULT;
-    }
-
     void set_text(Control id, const std::wstring &text) const {
-        const auto child = control(id);
-        if (GetFocus() != child && window_text(child) != text)
-            SetWindowTextW(child, text.c_str());
+        set_unfocused_text(control(id), text);
     }
 
     void show_timing(const Slider &slider, double value, bool enabled) const {
@@ -590,21 +415,21 @@ private:
 
     void refresh_defaults() const {
         set_text(default_track, defaults_.track ? std::to_wstring(defaults_.track) : L"Auto");
-        set_text(default_language, wstring(std::string(subtitle_defaults::language_name(defaults_.language))));
+        set_text(default_language, wstring(std::string(track_defaults::language_name(defaults_.language))));
     }
 
     void edit_default(Control id, std::wstring_view value) {
         const auto text = utf8(std::wstring(trim(value)).c_str());
         auto next = defaults_;
         if (id == default_track) {
-            if (const auto track = subtitle_defaults::parse_track(text)) {
+            if (const auto track = track_defaults::parse_track(text)) {
                 next.track = *track;
                 defaults_notice_ = nullptr;
             } else {
                 defaults_notice_ = L"Enter a track number or Auto.";
             }
         } else {
-            if (const auto language = subtitle_defaults::parse_language(text)) {
+            if (const auto language = track_defaults::parse_language(text)) {
                 next.language = *language;
                 defaults_notice_ = nullptr;
             } else {
@@ -613,7 +438,7 @@ private:
         }
         if (!(next == defaults_)) {
             defaults_ = std::move(next);
-            if (!subtitle_defaults::save(player_, defaults_))
+            if (!track_defaults::save(player_, track_defaults::Kind::subtitles, defaults_))
                 defaults_notice_ = L"VLC could not save the subtitle defaults.";
         }
         refresh_defaults();
@@ -799,11 +624,11 @@ private:
         switch (message) {
         case WM_CREATE: return initialize() ? 0 : -1;
         case WM_SIZE:
-            scroll_ = std::min(scroll_, scroll_limit());
+            scroll_.move(scroll_.offset(), bounds());
             layout();
             return 0;
         case WM_ERASEBKGND: return 1;
-        case WM_PAINT: paint(); return 0;
+        case WM_PAINT: paint(window_, bounds(), [this](HDC dc) { draw(dc); }); return 0;
         case WM_PRINTCLIENT: draw(reinterpret_cast<HDC>(wp)); return 0;
         case WM_TIMER:
             if (IsWindowVisible(window_))
@@ -812,23 +637,15 @@ private:
         case WM_MOUSEWHEEL: on_wheel(GET_WHEEL_DELTA_WPARAM(wp)); return 0;
         case WM_LBUTTONDOWN:
             SetFocus(window_);
-            if (scroll_limit() && GET_X_LPARAM(lp) >= bounds().right - 12) {
-                const int y = GET_Y_LPARAM(lp);
-                const auto bar = thumb();
-                thumb_grab_ = y >= bar.top && y < bar.bottom ? y - bar.top : (bar.bottom - bar.top) / 2;
-                SetCapture(window_);
-                scroll_from_mouse(y);
-            }
+            if (scroll_.start_drag(window_, bounds(), GET_X_LPARAM(lp), GET_Y_LPARAM(lp)))
+                layout();
             return 0;
         case WM_MOUSEMOVE:
-            if (thumb_grab_ >= 0)
-                scroll_from_mouse(GET_Y_LPARAM(lp));
+            if (scroll_.drag(bounds(), GET_Y_LPARAM(lp)))
+                layout();
             return 0;
-        case WM_LBUTTONUP:
-            if (thumb_grab_ >= 0)
-                ReleaseCapture();
-            return 0;
-        case WM_CAPTURECHANGED: thumb_grab_ = -1; return 0;
+        case WM_LBUTTONUP: scroll_.end_drag(); return 0;
+        case WM_CAPTURECHANGED: scroll_.capture_lost(); return 0;
         case WM_COMMAND: command(static_cast<Control>(LOWORD(wp)), HIWORD(wp)); return 0;
         case WM_HSCROLL:
             for (const auto &slider : sliders)
@@ -841,7 +658,7 @@ private:
         case WM_NOTIFY: {
             const auto notification = reinterpret_cast<NMHDR *>(lp);
             if (notification->code == NM_CUSTOMDRAW)
-                return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp));
+                return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), colors_, notification->idFrom == delay_slider);
             break;
         }
         case WM_CTLCOLOREDIT:

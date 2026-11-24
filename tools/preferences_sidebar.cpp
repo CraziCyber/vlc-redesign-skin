@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cwchar>
+#include <iterator>
 #include <utility>
 
+#include "audio_preferences_view.hpp"
 #include "context_menu_assets.hpp"
 #include "player_window.hpp"
 #include "preferences_layout.hpp"
@@ -24,20 +26,47 @@ constexpr UINT_PTR popup_subclass = 1;
 const LPARAM dismiss_position = MAKELPARAM(context_menu::command_x,
                                           static_cast<WORD>(context_menu::SkinCommand::dismiss_preferences));
 
+struct Page {
+    HWND (*create)(HWND, HWND, const RECT &, VlcPlayer, bool);
+    void (*set_visible)(HWND, bool);
+    bool (*handle_input)(HWND, const MSG &);
+    bool (*modal_open)(HWND);
+};
+
+constexpr Page pages[] = {
+    {subtitle_preferences_view::create, subtitle_preferences_view::set_visible,
+     subtitle_preferences_view::handle_input, subtitle_preferences_view::modal_open},
+    {audio_preferences_view::create, audio_preferences_view::set_visible,
+     audio_preferences_view::handle_input, nullptr},
+};
+
 struct Sidebar {
     HWND owner = nullptr;
     HWND toolbar = nullptr;
     HWND popup = nullptr;
-    HWND view = nullptr;
-    subtitle_preferences::Player player{};
+    VlcPlayer player{};
+    HWND views[std::size(pages)]{};
     bool moved_during_click = false;
-    bool subtitles = true;
+    int tab = 1;
     int pressed_tab = 0;
 };
 
 thread_local Sidebar sidebar;
 thread_local HWND pressed_gear = nullptr;
 std::atomic<HWND> active_owner{nullptr};
+
+const Page *current_page() {
+    return sidebar.tab > 0 && static_cast<std::size_t>(sidebar.tab) <= std::size(pages) ? &pages[sidebar.tab - 1] : nullptr;
+}
+
+HWND current_view() {
+    return current_page() ? sidebar.views[sidebar.tab - 1] : nullptr;
+}
+
+bool modal_open() {
+    const auto page = current_page();
+    return page && page->modal_open && page->modal_open(current_view());
+}
 
 UINT dismiss_message() {
     static const UINT id = RegisterWindowMessageW(L"VlcRedesign.DismissPreferencesSidebar");
@@ -54,9 +83,11 @@ void stop_tracking() {
         RemoveWindowSubclass(previous.owner, follow_owner, owner_subclass);
     if (previous.popup)
         RemoveWindowSubclass(previous.popup, follow_popup, popup_subclass);
-    if (previous.view && IsWindow(previous.view)) {
-        subtitle_preferences_view::set_visible(previous.view, false);
-        DestroyWindow(previous.view);
+    for (std::size_t i = 0; i < std::size(pages); ++i) {
+        if (const auto view = previous.views[i]; view && IsWindow(view)) {
+            pages[i].set_visible(view, false);
+            DestroyWindow(view);
+        }
     }
 }
 
@@ -76,10 +107,9 @@ POINT panel_origin(const RECT &client) {
 }
 
 void place_view() {
-    if (!sidebar.subtitles) {
-        subtitle_preferences_view::set_visible(sidebar.view, false);
+    const auto page = current_page();
+    if (!page)
         return;
-    }
     const HWND parent = panel_parent();
     RECT client{};
     if (!GetClientRect(parent, &client))
@@ -89,18 +119,19 @@ void place_view() {
                     client.bottom - (sidebar.popup ? 0 : bottom) - body_bottom - corner};
     if (view.bottom <= view.top)
         return;
-    if (sidebar.view) {
-        SetWindowPos(sidebar.view, nullptr, view.left, view.top, view.right - view.left, view.bottom - view.top,
+    auto &window = sidebar.views[sidebar.tab - 1];
+    if (window) {
+        SetWindowPos(window, nullptr, view.left, view.top, view.right - view.left, view.bottom - view.top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
-        if (!IsWindowVisible(sidebar.view))
-            subtitle_preferences_view::set_visible(sidebar.view, true);
+        if (!IsWindowVisible(window))
+            page->set_visible(window, true);
     } else {
         UpdateWindow(parent);
         const HDC dc = GetDC(parent);
         const bool light = dc && GetPixel(dc, view.left + 2, view.top + 2) == RGB(194, 193, 193);
         if (dc)
             ReleaseDC(parent, dc);
-        sidebar.view = subtitle_preferences_view::create(parent, sidebar.owner, view, sidebar.player, light);
+        window = page->create(parent, sidebar.owner, view, sidebar.player, light);
     }
 }
 
@@ -150,7 +181,7 @@ LRESULT CALLBACK follow_owner(HWND window, UINT message, WPARAM wp, LPARAM lp, U
             dismiss();
         else
             stop_tracking();
-    } else if (!subtitle_preferences_view::modal_open(sidebar.view) &&
+    } else if (!modal_open() &&
                ((message == WM_ACTIVATEAPP && !wp) || (message == WM_WINDOWPOSCHANGED &&
                (reinterpret_cast<const WINDOWPOS *>(lp)->flags & SWP_HIDEWINDOW)))) {
         PostMessageW(window, dismiss_message(), 0, 0);
@@ -186,7 +217,7 @@ HWND visible_popup() {
 
 void track(HWND toolbar, HWND owner, HWND popup, subtitle_preferences::Player player) {
     if (SetWindowSubclass(owner, follow_owner, owner_subclass, 0)) {
-        sidebar = {owner, toolbar, popup, nullptr, player};
+        sidebar = {owner, toolbar, popup, player};
         active_owner.store(owner);
         if (popup) {
             SetWindowSubclass(popup, follow_popup, popup_subclass, 0);
@@ -205,7 +236,7 @@ bool escape_pressed(const MSG &message) {
 }
 
 bool inside_sidebar(const MSG &message) {
-    if (sidebar.view && (message.hwnd == sidebar.view || IsChild(sidebar.view, message.hwnd)))
+    if (const auto view = current_view(); view && (message.hwnd == view || IsChild(view, message.hwnd)))
         return true;
     if (sidebar.popup)
         return message.hwnd == sidebar.popup || IsChild(sidebar.popup, message.hwnd);
@@ -250,9 +281,9 @@ bool handle_gear(const MSG &message, subtitle_preferences::Player player, HWND f
 }
 
 bool handle_message(const MSG &message) {
-    if (!sidebar.owner || subtitle_preferences_view::modal_open(sidebar.view))
+    if (!sidebar.owner || modal_open())
         return false;
-    if (subtitle_preferences_view::handle_input(sidebar.view, message))
+    if (const auto page = current_page(); page && page->handle_input(current_view(), message))
         return true;
     if ((message.message == dismiss_message() && message.hwnd == sidebar.owner) || escape_pressed(message)) {
         dismiss();
@@ -269,11 +300,15 @@ bool handle_message(const MSG &message) {
     if (message.message == WM_LBUTTONUP) {
         const int pressed = std::exchange(sidebar.pressed_tab, 0);
         if (pressed && pressed == tab_at(message)) {
+            if (sidebar.tab != pressed) {
+                if (const auto page = current_page())
+                    page->set_visible(current_view(), false);
+                sidebar.tab = pressed;
+            }
             if (sidebar.popup)
                 player_window::press_layout_button(sidebar.popup, message.lParam, true);
             else
                 SendMessageW(message.hwnd, WM_LBUTTONUP, message.wParam, message.lParam);
-            sidebar.subtitles = pressed == 1;
             place_view();
             return true;
         }
@@ -286,8 +321,8 @@ bool handle_message(const MSG &message) {
 }
 
 bool owns_input_target(HWND window) {
-    return sidebar.view && (window == sidebar.view || IsChild(sidebar.view, window) ||
-                            subtitle_preferences_view::modal_open(sidebar.view));
+    const auto view = current_view();
+    return view && (window == view || IsChild(view, window) || modal_open());
 }
 
 bool handle_video_event(const MSG &message) {

@@ -1,4 +1,5 @@
-#include "subtitle_defaults.hpp"
+#include "track_defaults.hpp"
+#include "vlc_config.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -16,6 +17,10 @@ extern "C" {
 __declspec(dllimport) const Language *GetLang_1(const char *);
 __declspec(dllimport) const Language *GetLang_2T(const char *);
 __declspec(dllimport) const Language *GetLang_2B(const char *);
+}
+
+const char *config_key(track_defaults::Kind kind) {
+    return kind == track_defaults::Kind::audio ? track_defaults::audio_key : track_defaults::subtitle_key;
 }
 
 bool known(const Language *language) {
@@ -71,7 +76,7 @@ std::string language_code(const Language *language) {
 bool matches(std::string_view preferred, const char *language) {
     if (!language)
         return false;
-    const auto code = subtitle_defaults::parse_language(language);
+    const auto code = track_defaults::parse_language(language);
     return code && (*code == preferred || (preferred == "no" && (*code == "nb" || *code == "nn")));
 }
 
@@ -86,19 +91,20 @@ struct MediaTracks {
     MediaTracks &operator=(const MediaTracks &) = delete;
 };
 
-std::optional<std::int64_t> preferred_track(const subtitle_defaults::Preset &preset,
-                                            const std::vector<std::int64_t> &available, const MediaTracks *metadata) {
+std::optional<std::int64_t> preferred_track(const track_defaults::Preset &preset,
+                                            const std::vector<std::int64_t> &available, const MediaTracks *metadata,
+                                            track_defaults::Kind kind) {
     const auto numbered = preset.track > 0 && static_cast<std::size_t>(preset.track) <= available.size()
         ? std::optional<std::int64_t>{available[preset.track - 1]} : std::nullopt;
     if (!metadata)
         return numbered;
 
+    const int type = kind == track_defaults::Kind::audio ? 0 : 2;  // libvlc_track_type_t
     std::optional<std::int64_t> first_match;
     for (const auto id : available) {
         for (unsigned i = 0; i < metadata->count; ++i) {
             const auto *track = metadata->entries[i];
-            constexpr int subtitle = 2;  // libvlc_track_text
-            if (track->type != subtitle || track->id != id || !matches(preset.language, track->language))
+            if (track->type != type || track->id != id || !matches(preset.language, track->language))
                 continue;
             if (numbered == id)
                 return id;
@@ -112,7 +118,7 @@ std::optional<std::int64_t> preferred_track(const subtitle_defaults::Preset &pre
 
 }
 
-std::optional<int> subtitle_defaults::parse_track(std::string_view value) {
+std::optional<int> track_defaults::parse_track(std::string_view value) {
     if (value.empty() || lowercase(value) == "auto")
         return 0;
     int number = 0;
@@ -123,7 +129,7 @@ std::optional<int> subtitle_defaults::parse_track(std::string_view value) {
     return number;
 }
 
-std::optional<std::string> subtitle_defaults::parse_language(std::string_view value) {
+std::optional<std::string> track_defaults::parse_language(std::string_view value) {
     auto name = lowercase(value);
     if (name.empty() || name == "any" || name == "any language" || name == "auto")
         return std::string{};
@@ -141,14 +147,30 @@ std::optional<std::string> subtitle_defaults::parse_language(std::string_view va
     return std::nullopt;
 }
 
-std::string_view subtitle_defaults::language_name(const std::string &code) {
+std::string_view track_defaults::language_name(const std::string &code) {
     if (const auto language = lookup_code(code))
         return language->name;
     return "Any language";
 }
 
-void subtitle_defaults::AutoSelect::refresh(subtitle_preferences::Player player, LibVlcRef &library) {
-    auto preset = load(player);
+track_defaults::Preset track_defaults::load(VlcPlayer player, Kind kind) {
+    const std::unique_ptr<char, decltype(&libvlc_free)> stored(config_GetPsz(player.vlc, config_key(kind)), libvlc_free);
+    const std::string_view text = stored ? stored.get() : "";
+    const auto separator = text.find(':');
+    if (separator == text.npos)
+        return {};
+    return {parse_track(text.substr(0, separator)).value_or(0),
+            parse_language(text.substr(separator + 1)).value_or("")};
+}
+
+bool track_defaults::save(VlcPlayer player, Kind kind, const Preset &preset) {
+    const auto value = std::to_string(preset.track) + ':' + preset.language;
+    config_PutPsz(player.vlc, config_key(kind), value.c_str());
+    return vlc_config::save(player.vlc);
+}
+
+void track_defaults::AutoSelect::refresh(VlcPlayer player, LibVlcRef &library) {
+    auto preset = load(player, kind_);
     if (!preset.track && preset.language.empty()) {
         preset_ = {};
         input_.reset();
@@ -165,7 +187,8 @@ void subtitle_defaults::AutoSelect::refresh(subtitle_preferences::Player player,
     if (applied_ || !active_playback(input_.get()))
         return;
 
-    const VlcChoices choices(input_.get(), "spu-es");
+    const char *variable = kind_ == Kind::audio ? "audio-es" : "spu-es";
+    const VlcChoices choices(input_.get(), variable);
     if (!choices.ids.list)
         return;
     std::vector<std::int64_t> available;
@@ -193,10 +216,10 @@ void subtitle_defaults::AutoSelect::refresh(subtitle_preferences::Player player,
     }
 
     // Apply once per input or preset edit so a manual switch stays in effect.
-    if (const auto id = preferred_track(preset_, available, tracks ? &*tracks : nullptr)) {
+    if (const auto id = preferred_track(preset_, available, tracks ? &*tracks : nullptr, kind_)) {
         VlcValue selected{};
-        applied_ = (var_Get(input_.get(), "spu-es", &selected) == 0 && selected.integer == *id) ||
-                   var_Set(input_.get(), "spu-es", VlcValue{*id}) == 0;
+        applied_ = (var_Get(input_.get(), variable, &selected) == 0 && selected.integer == *id) ||
+                   var_Set(input_.get(), variable, VlcValue{*id}) == 0;
     } else {
         applied_ = true;
     }

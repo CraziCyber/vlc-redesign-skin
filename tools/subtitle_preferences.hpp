@@ -4,14 +4,11 @@
 #include <cstdint>
 #include <string>
 
-struct Playlist;
+#include "vlc_input.hpp"
 
 namespace subtitle_preferences {
 
-struct Player {
-    void *vlc;
-    Playlist *playlist;
-};
+using Player = VlcPlayer;
 
 struct Synchronization {
     bool active = false;

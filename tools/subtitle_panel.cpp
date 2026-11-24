@@ -29,11 +29,10 @@
 #include "preferences_sidebar.hpp"
 #include "subtitle_drop.hpp"
 #include "vlc_input.hpp"
-#include "subtitle_defaults.hpp"
+#include "track_defaults.hpp"
 
 // The VLC 3.0 module ABI used here is defined by vlc_common.h, vlc_interface.h,
 // vlc_plugin.h, vlc_variables.h, vlc_playlist.h and vlc_aout.h.
-struct AudioOutput;
 template<class Parent>
 struct VlcObject {
     const char *object_type;
@@ -71,7 +70,6 @@ static_assert(offsetof(Playlist, playing) == 120, "VLC 3.0.24 64-bit playlist la
 extern "C" {
 __declspec(dllimport) void playlist_Lock(Playlist *);
 __declspec(dllimport) void playlist_Unlock(Playlist *);
-__declspec(dllimport) AudioOutput *playlist_GetAout(Playlist *);
 __declspec(dllimport) int aout_DevicesList(AudioOutput *, char ***, char ***);
 __declspec(dllimport) char *aout_DeviceGet(AudioOutput *);
 __declspec(dllimport) int aout_DeviceSet(AudioOutput *, const char *);
@@ -125,7 +123,6 @@ constexpr char subtitle_description[] = "sub-description";
 constexpr COLORREF dark_panel = RGB(15, 15, 15), light_panel = RGB(194, 193, 193);
 constexpr COLORREF accent = RGB(211, 121, 24);
 
-using AudioOutputRef = std::unique_ptr<AudioOutput, decltype(&vlc_object_release)>;
 
 struct DroppedSubtitles {
     InputRef input;
@@ -1330,7 +1327,8 @@ private:
     std::vector<LoadedSubtitle> loaded_local_subtitles_;
     LibVlcRef metadata_library_{nullptr, libvlc_release};
     EmbeddedTracks embedded_{metadata_library_};
-    subtitle_defaults::AutoSelect subtitle_defaults_;
+    track_defaults::AutoSelect subtitle_defaults_{track_defaults::Kind::subtitles};
+    track_defaults::AutoSelect audio_defaults_{track_defaults::Kind::audio};
     std::vector<Track> tracks_, external_tracks_;
     int embedded_rows_ = min_embedded_rows;
     std::int64_t selected_track_ = no_track;
@@ -1536,8 +1534,10 @@ private:
         if (const auto interface = context_interface.load()) {
             const subtitle_preferences::Player player{interface->libvlc, interface->parent};
             subtitle_preferences::reset_duration_on_media_change(player);
-            if (redesign_is_selected(player.vlc))
+            if (redesign_is_selected(player.vlc)) {
                 subtitle_defaults_.refresh(player, metadata_library_);
+                audio_defaults_.refresh(player, metadata_library_);
+            }
         }
         refresh_local_subtitle();
         PanelWindow window;
@@ -2084,11 +2084,15 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
         set(data, module, close_callback, "close_panel", reinterpret_cast<void *>(close_panel)))
         return -1;
     constexpr int config_string = 0x80;
-    void *config;
-    if (set(data, nullptr, create_config, config_string, &config) ||
-        set(data, config, config_name, subtitle_defaults::config_key) ||
-        set(data, config, config_value, "") ||
-        set(data, config, config_description, "Subtitle defaults preset", "Preferred subtitle track number and language."))
+    const auto add_preset = [&](const char *key, const char *label, const char *help) {
+        void *config;
+        return !set(data, nullptr, create_config, config_string, &config) &&
+               !set(data, config, config_name, key) &&
+               !set(data, config, config_value, "") &&
+               !set(data, config, config_description, label, help);
+    };
+    if (!add_preset(track_defaults::subtitle_key, "Subtitle defaults preset", "Preferred subtitle track number and language.") ||
+        !add_preset(track_defaults::audio_key, "Audio defaults preset", "Preferred audio track number and language."))
         return -1;
     const char *const shortcuts[] = {subtitle_preferences::text_style_filter};
     if (set(data, nullptr, create_module, &module) ||

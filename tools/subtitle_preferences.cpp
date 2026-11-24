@@ -1,5 +1,5 @@
 #include "subtitle_preferences.hpp"
-#include "subtitle_defaults.hpp"
+#include "vlc_config.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -8,13 +8,6 @@
 #include <string_view>
 
 extern "C" {
-__declspec(dllimport) std::int64_t config_GetInt(void *, const char *);
-__declspec(dllimport) float config_GetFloat(void *, const char *);
-__declspec(dllimport) char *config_GetPsz(void *, const char *);
-__declspec(dllimport) void config_PutInt(void *, const char *, std::int64_t);
-__declspec(dllimport) void config_PutPsz(void *, const char *, const char *);
-__declspec(dllimport) int config_SaveConfigFile(void *);
-__declspec(dllimport) int var_Inherit(void *, const char *, int, VlcValue *);
 __declspec(dllimport) int var_Type(void *, const char *);
 }
 
@@ -50,14 +43,9 @@ InputRef current_input(Player player) {
     return input;
 }
 
-std::string consume_string(char *text) {
-    const std::unique_ptr<char, decltype(&libvlc_free)> value(text, libvlc_free);
-    return value ? value.get() : "";
-}
-
 std::string filter_chain(void *object) {
     VlcValue value{};
-    return var_Get(object, filter_key, &value) == 0 ? consume_string(value.string) : "";
+    return var_Get(object, filter_key, &value) == 0 ? vlc_config::take_string(value.string) : "";
 }
 
 void append_filter(std::string &chain, std::string_view filter) {
@@ -194,12 +182,6 @@ void restart_subtitles(Input *input) {
         input_Control(input, input_restart_es, static_cast<int>(track.integer));
 }
 
-bool save_preferences(void *vlc) {
-    VlcValue ignore{};
-    const bool ignore_config = var_Inherit(vlc, "ignore-config", bool_var, &ignore) == 0 && ignore.boolean;
-    return ignore_config || config_SaveConfigFile(vlc) == 0;
-}
-
 }
 
 Synchronization timing(Player player) {
@@ -241,7 +223,7 @@ bool set_timing(Player player, Timing field, double number) {
 }
 
 Appearance appearance(Player player) {
-    return {option(player, "subsdec-formatted") != 0, consume_string(config_GetPsz(player.vlc, "freetype-font")),
+    return {option(player, "subsdec-formatted") != 0, vlc_config::take_string(config_GetPsz(player.vlc, "freetype-font")),
             static_cast<std::uint32_t>(option(player, "freetype-color")),
             static_cast<std::uint32_t>(option(player, "freetype-outline-color")), option(player, "sub-margin"),
             std::clamp(option(player, "freetype-fontsize"), 0, 4096), option(player, "freetype-rel-fontsize"),
@@ -291,7 +273,7 @@ StyleResult set_style(Player player, Style field, const Appearance &style) {
         config_PutInt(player.vlc, "freetype-background-opacity", style.background_alpha);
         break;
     }
-    return {save_preferences(player.vlc), reload && bool(input)};
+    return {vlc_config::save(player.vlc), reload && bool(input)};
 }
 
 void use_saved_style(Player player) {
@@ -320,20 +302,4 @@ void release_media() {
     set_live_font_size(-1, 0);
 }
 
-}
-
-subtitle_defaults::Preset subtitle_defaults::load(subtitle_preferences::Player player) {
-    const auto value = subtitle_preferences::consume_string(config_GetPsz(player.vlc, config_key));
-    const auto separator = value.find(':');
-    if (separator == std::string::npos)
-        return {};
-    const std::string_view text(value);
-    return {parse_track(text.substr(0, separator)).value_or(0),
-            parse_language(text.substr(separator + 1)).value_or("")};
-}
-
-bool subtitle_defaults::save(subtitle_preferences::Player player, const Preset &preset) {
-    const auto value = std::to_string(preset.track) + ':' + preset.language;
-    config_PutPsz(player.vlc, config_key, value.c_str());
-    return subtitle_preferences::save_preferences(player.vlc);
 }

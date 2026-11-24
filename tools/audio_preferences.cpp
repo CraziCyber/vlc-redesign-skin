@@ -1,0 +1,181 @@
+#include "audio_preferences.hpp"
+#include "vlc_config.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <string_view>
+
+struct Equalizer;
+
+extern "C" {
+__declspec(dllimport) void playlist_EnableAudioFilter(Playlist *, const char *, bool);
+__declspec(dllimport) std::ptrdiff_t config_GetPszChoices(void *, const char *, char ***, char ***);
+__declspec(dllimport) Equalizer *libvlc_audio_equalizer_new_from_preset(unsigned);
+__declspec(dllimport) void libvlc_audio_equalizer_release(Equalizer *);
+__declspec(dllimport) float libvlc_audio_equalizer_get_preamp(Equalizer *);
+__declspec(dllimport) unsigned libvlc_audio_equalizer_get_band_count();
+__declspec(dllimport) float libvlc_audio_equalizer_get_amp_at_index(Equalizer *, unsigned);
+}
+
+namespace audio_preferences {
+namespace {
+
+constexpr char filter_key[] = "audio-filter", stereo_key[] = "stereo-mode", delay_key[] = "audio-delay";
+constexpr char equalizer[] = "equalizer", preset_key[] = "equalizer-preset", bands_key[] = "equalizer-bands";
+constexpr char preamp_key[] = "equalizer-preamp", two_pass_key[] = "equalizer-2pass";
+constexpr char pitch_key[] = "pitch-shift", pitch_filter[] = "scaletempo_pitch";
+constexpr const char *filters[] = {"compressor", "spatializer", "stereo_widen"};
+constexpr double ticks_per_second = 1000000;
+
+InputRef audio_input(VlcPlayer player) {
+    InputRef input(playlist_CurrentInput(player.playlist), vlc_object_release);
+    VlcValue track{};
+    if (!active_playback(input.get()) || var_Get(input.get(), "audio-es", &track) != 0 || track.integer < 0)
+        input.reset();
+    return input;
+}
+
+std::string string_option(VlcPlayer player, AudioOutput *output, const char *key) {
+    VlcValue value{};
+    if (output && var_Get(output, key, &value) == 0)
+        return vlc_config::take_string(value.string);
+    return vlc_config::take_string(config_GetPsz(player.vlc, key));
+}
+
+bool contains_filter(std::string_view chain, std::string_view target) {
+    while (!chain.empty()) {
+        const auto separator = chain.find(':');
+        if (chain.substr(0, separator) == target)
+            return true;
+        if (separator == chain.npos)
+            break;
+        chain.remove_prefix(separator + 1);
+    }
+    return false;
+}
+
+void enable_filter(VlcPlayer player, const char *filter, bool enabled) {
+    playlist_EnableAudioFilter(player.playlist, filter, enabled);
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    if (output) {
+        const auto chain = string_option(player, output.get(), filter_key);
+        config_PutPsz(player.vlc, filter_key, chain.c_str());
+    }
+}
+
+void set_string(AudioOutput *output, const char *key, std::string value) {
+    if (!output)
+        return;
+    VlcValue data{};
+    data.string = value.data();
+    var_Set(output, key, data);
+}
+
+void set_float(AudioOutput *output, const char *key, float value) {
+    if (!output)
+        return;
+    VlcValue data{};
+    data.real = value;
+    var_Set(output, key, data);
+}
+
+}
+
+Settings read(VlcPlayer player) {
+    const auto input = audio_input(player);
+    VlcValue delay{}, pitch{}, two_pass{};
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    const auto chain = string_option(player, output.get(), filter_key);
+    return {
+        input && var_Get(input.get(), delay_key, &delay) == 0
+            ? std::optional<double>(delay.integer / ticks_per_second) : std::nullopt,
+        static_cast<int>(config_GetInt(player.vlc, stereo_key)),
+        contains_filter(chain, equalizer) ? string_option(player, output.get(), preset_key) : "",
+        output && var_Get(output.get(), two_pass_key, &two_pass) == 0
+            ? two_pass.boolean : config_GetInt(player.vlc, two_pass_key) != 0,
+        contains_filter(chain, filters[0]), contains_filter(chain, filters[1]), contains_filter(chain, filters[2]),
+        contains_filter(chain, pitch_filter)
+            ? (output && var_Get(output.get(), pitch_key, &pitch) == 0 ? pitch.real : config_GetFloat(player.vlc, pitch_key))
+            : 0.0f,
+    };
+}
+
+std::vector<Preset> equalizer_presets(VlcPlayer player) {
+    char **values = nullptr, **labels = nullptr;
+    const auto count = config_GetPszChoices(player.vlc, preset_key, &values, &labels);
+    std::vector<Preset> presets;
+    unsigned index = 0;
+    for (std::ptrdiff_t i = 0; i < count; ++i) {
+        const auto value = vlc_config::take_string(values[i]);
+        const auto label = vlc_config::take_string(labels[i]);
+        if (!value.empty())
+            presets.push_back({value, label.empty() ? value : label, index++});
+    }
+    libvlc_free(values);
+    libvlc_free(labels);
+    return presets;
+}
+
+void set_stereo_mode(VlcPlayer player, int mode) {
+    config_PutInt(player.vlc, stereo_key, mode);
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    if (output)
+        var_Set(output.get(), stereo_key, VlcValue{mode});
+}
+
+void set_delay(VlcPlayer player, double seconds) {
+    const auto input = audio_input(player);
+    const auto ticks = std::llround(std::clamp(seconds, -10.0, 10.0) * ticks_per_second);
+    if (input)
+        var_Set(input.get(), delay_key, VlcValue{ticks});
+}
+
+void set_equalizer(VlcPlayer player, const Preset *preset) {
+    if (preset) {
+        const std::unique_ptr<Equalizer, decltype(&libvlc_audio_equalizer_release)>
+            settings(libvlc_audio_equalizer_new_from_preset(preset->index), libvlc_audio_equalizer_release);
+        if (!settings)
+            return;
+        const auto preamp = libvlc_audio_equalizer_get_preamp(settings.get());
+        std::string bands;
+        for (unsigned i = 0; i < libvlc_audio_equalizer_get_band_count(); ++i) {
+            if (i)
+                bands += ' ';
+            bands += std::to_string(libvlc_audio_equalizer_get_amp_at_index(settings.get(), i));
+        }
+        config_PutPsz(player.vlc, preset_key, preset->key.c_str());
+        config_PutPsz(player.vlc, bands_key, bands.c_str());
+        config_PutFloat(player.vlc, preamp_key, preamp);
+        const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+        set_string(output.get(), preset_key, preset->key);
+        set_string(output.get(), bands_key, bands);
+        set_float(output.get(), preamp_key, preamp);
+    }
+    enable_filter(player, equalizer, preset != nullptr);
+}
+
+void set_two_pass(VlcPlayer player, bool enabled) {
+    config_PutInt(player.vlc, two_pass_key, enabled);
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    if (output) {
+        VlcValue value{};
+        value.boolean = enabled;
+        var_Set(output.get(), two_pass_key, value);
+    }
+}
+
+void set_filter(VlcPlayer player, Filter filter, bool enabled) {
+    enable_filter(player, filters[static_cast<unsigned>(filter)], enabled);
+}
+
+void set_pitch(VlcPlayer player, float semitones) {
+    const auto value = std::clamp(semitones, -12.0f, 12.0f);
+    config_PutFloat(player.vlc, pitch_key, value);
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    set_float(output.get(), pitch_key, value);
+    const auto chain = string_option(player, output.get(), filter_key);
+    if (contains_filter(chain, pitch_filter) != (value != 0))
+        enable_filter(player, pitch_filter, value != 0);
+}
+
+}

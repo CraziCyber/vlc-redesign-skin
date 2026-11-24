@@ -10,6 +10,12 @@ struct Playlist;
 struct LibVlc;
 struct Media;
 struct VlcList;
+struct AudioOutput;
+
+struct VlcPlayer {
+    void *vlc;
+    Playlist *playlist;
+};
 
 // VLC 3.0's vlc_value_t is passed by value to var_Set on this platform.
 union VlcValue {
@@ -38,13 +44,14 @@ static_assert(offsetof(MediaTrack, language) == 0x28, "VLC 3.0.24 Win64 media tr
 
 extern "C" {
 __declspec(dllimport) Input *playlist_CurrentInput(Playlist *);
+__declspec(dllimport) AudioOutput *playlist_GetAout(Playlist *);
 __declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) int input_Control(Input *, int, ...);
 __declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int var_Create(void *, const char *, int);
 __declspec(dllimport) int var_Get(void *, const char *, VlcValue *);
 __declspec(dllimport) int var_Set(void *, const char *, VlcValue);
-__declspec(dllimport) int var_Change(Input *, const char *, int, VlcValue *, VlcValue *);
+__declspec(dllimport) int var_Change(void *, const char *, int, VlcValue *, VlcValue *);
 __declspec(dllimport) void var_FreeList(VlcValue *, VlcValue *);
 __declspec(dllimport) void libvlc_free(void *);
 __declspec(dllimport) LibVlc *libvlc_new(int, const char *const *);
@@ -56,16 +63,17 @@ __declspec(dllimport) void libvlc_media_tracks_release(MediaTrack **, unsigned);
 }
 
 using InputRef = std::unique_ptr<Input, decltype(&vlc_object_release)>;
+using AudioOutputRef = std::unique_ptr<AudioOutput, decltype(&vlc_object_release)>;
 using LibVlcRef = std::unique_ptr<LibVlc, decltype(&libvlc_release)>;
 using MediaRef = std::unique_ptr<Media, decltype(&libvlc_media_release)>;
 
 struct VlcChoices {
     VlcValue ids{}, labels{};
 
-    VlcChoices(Input *input, const char *variable) {
+    VlcChoices(void *object, const char *variable) {
         constexpr int get_choices = 0x24;
-        if (input)
-            var_Change(input, variable, get_choices, &ids, &labels);
+        if (object)
+            var_Change(object, variable, get_choices, &ids, &labels);
     }
     ~VlcChoices() {
         if (ids.list)

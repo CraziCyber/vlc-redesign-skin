@@ -23,8 +23,9 @@ CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vl
                 "var_Change", "var_FreeList", "var_Inherit", "var_Type", "input_GetItem", "input_item_GetURI", "input_item_GetTitleFbName",
                 "input_item_GetMeta", "vlc_uri2path",
                 "input_Control", "vlc_path2uri",
-                "playlist_GetAout", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext",
-                "playlist_Status", "config_GetPsz", "config_PutPsz", "config_GetInt", "config_PutInt", "config_GetFloat",
+                "playlist_GetAout", "playlist_EnableAudioFilter", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext",
+                "playlist_Status", "config_GetPsz", "config_PutPsz", "config_GetPszChoices",
+                "config_GetInt", "config_PutInt", "config_GetFloat", "config_PutFloat",
                 "config_SaveConfigFile", "demux_vaControl", "module_get_object", "text_style_Delete",
                 "vlc_list_children", "vlc_list_release", "GetLang_1",
                 "GetLang_2T", "GetLang_2B",
@@ -33,7 +34,12 @@ CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vl
 LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_new_location",
                   "libvlc_media_release", "libvlc_media_parse_with_options",
                   "libvlc_media_get_parsed_status", "libvlc_media_parse_stop",
-                  "libvlc_media_tracks_get", "libvlc_media_tracks_release", "libvlc_media_new_from_input_item")
+                  "libvlc_media_tracks_get", "libvlc_media_tracks_release", "libvlc_media_new_from_input_item",
+                  "libvlc_audio_equalizer_new_from_preset", "libvlc_audio_equalizer_release",
+                  "libvlc_audio_equalizer_get_preamp", "libvlc_audio_equalizer_get_band_count",
+                  "libvlc_audio_equalizer_get_amp_at_index", "libvlc_media_new_callbacks",
+                  "libvlc_media_player_new_from_media", "libvlc_media_player_play", "libvlc_media_player_stop",
+                  "libvlc_media_player_get_state", "libvlc_media_player_release", "libvlc_audio_output_device_set")
 
 
 def build_module(output, toolchain):
@@ -68,7 +74,8 @@ def build_module(output, toolchain):
                         ROOT / "tools/add_subtitles.cpp", ROOT / "tools/context_menu.cpp", ROOT / "tools/hidden_controls.cpp",
                         ROOT / "tools/player_window.cpp", ROOT / "tools/preferences_sidebar.cpp",
                         ROOT / "tools/subtitle_preferences.cpp", ROOT / "tools/subtitle_preferences_view.cpp",
-                        ROOT / "tools/subtitle_defaults.cpp",
+                        ROOT / "tools/track_defaults.cpp", ROOT / "tools/audio_preferences.cpp",
+                        ROOT / "tools/audio_preferences_view.cpp", ROOT / "tools/stereo_test.cpp",
                         ROOT / "tools/subtitle_style_filter.cpp", ROOT / "tools/subtitle_speed_filter.cpp",
                         ROOT / "tools/opensubtitles.cpp", resources,
                         ROOT / "tools/subtitle_folder.cpp", ROOT / "tools/local_subtitles.cpp", ROOT / "tools/subtitle_drop.cpp",
