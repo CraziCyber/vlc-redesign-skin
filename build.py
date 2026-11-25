@@ -56,7 +56,7 @@ def other(t):
 
 def switch_theme(t, kind):
     o = other(t)
-    return (f"main.setLayout({lid(o, kind)});eqwin.setLayout({lid(o, 'eq')});"
+    return (f"main.setLayout({lid(o, kind)});"
             f"subtitlewin.setLayout({lid(o, 'subtitles')});"
             f"fullscreenController.setLayout({lid(o, 'fsc')})")
 
@@ -253,13 +253,19 @@ def control_bar(L, art, oy, W, *, kind, bg, last):
     L.slider("volume", W - 292, oy + 13, "(0,27),(87,27)", up=art.nothing(), w=88, h=28,
              tip="Volume: $V%", anchor=A("br"), background=(frames, 9, 10), hint="volume")
 
-    L.toggle("eqwin.isVisible", art.icon_button("audio", 30, 32, 3, 4),
-               art.icon_button("audio", 30, 32, 3, 4, active=True), "eqwin.show()", "eqwin.hide()",
-               "Equalizer", "Hide equalizer", x=W - 184, y=oy + 11, anchor=A("br"))
-    L.toggle("subtitlewin.isVisible", art.icon_button("subtitles", 30, 32, 3, 4),
-             art.icon_button("subtitles_active", 30, 32, 3, 4, original_colors=True),
-             "subtitlewin.show()", "subtitlewin.hide()", "Open subtitles", "Close subtitles",
-             x=W - 142, y=oy + 11, anchor=A("br"))
+    tracks_visible = "subtitlewin.isVisible"
+    track_buttons = (
+        ("audio", "audio tracks", 184, art.icon_button("audio", 30, 32, 3, 4, active=True)),
+        ("subtitles", "subtitles", 142, art.icon_button("subtitles_active", 30, 32, 3, 4, original_colors=True)),
+    )
+    for page, label, offset, active_icon in track_buttons:
+        layout = lid(t, page)
+        active = f"{layout}.isActive"
+        L.button(art.icon_button(page, 30, 32, 3, 4), W - offset, oy + 11,
+                 f"subtitlewin.setLayout({layout});subtitlewin.show()", f"Open {label}",
+                 anchor=A("br"), visible=f"not {tracks_visible} or not {active}")
+        L.button(active_icon, W - offset, oy + 11, "subtitlewin.hide()", f"Close {label}",
+                 anchor=A("br"), visible=f"{tracks_visible} and {active}")
     settings = art.icon_button("playback_settings", 30, 32, 3, 4)
     settings_active = art.icon_button("playback_settings_active", 30, 32, 3, 4, active=True)
     select_first = f"preferenceswin.setLayout({lid(t, 'preferences1')})"
@@ -512,64 +518,6 @@ def mini_layout(skin, win, t):
     return L
 
 
-# --- equalizer (Figma "Audio - Equalizer", 6114:13610) -------------------------------
-
-BANDS = ("60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz", "16 kHz")
-
-
-def toggle_images(art, on):
-    """The Figma 'Toggle' (536:1014): a dark pill with a square knob and ON / OFF."""
-    t = art.t
-
-    def draw(state):
-        img = P.rrect(64, 28, (0, 0, 64, 28), 6, t["track"])
-        kx = 38 if state else 2
-        img.alpha_composite(P.rrect(64, 28, (kx, 2, kx + 24, 26), 4, t["accent" if state else "toggle_off_knob"]))
-        return P.text(img, 20 if state else 45, 18, "ON" if state else "OFF", 11,
-                      t["accent" if state else "text_dim"], weight="semibold", align="center")
-    off = art.get("toggle.off", lambda: draw(False), on, opaque=True)
-    on_ = art.get("toggle.on", lambda: draw(True), on, opaque=True)
-    return (off, off, off), (on_, on_, on_)
-
-
-def eq_layout(skin, win, t):
-    W, row_h = 400, 34
-    first = 92
-    bands_top = first + row_h + 8
-    H = bands_top + 10 * row_h + 22
-    L = Layout(skin, win, lid(t, "eq"), W, H)
-    art = Art(skin, t)
-    tx0, tx1 = 100, 372                           # track
-    rows = [("Preamp", "equalizer.preamp", first)] + [
-        (b, f"equalizer.band({i})", bands_top + i * row_h) for i, b in enumerate(BANDS)]
-
-    bg_img = P.solid(W, H, t["border"])
-    bg_img.alpha_composite(P.rrect(W, H, (1, 1, W - 1, H - 1), 0, t["card_outer"]))
-    P.text(bg_img, 20, 34, "Equalizer", 16, t["text_hi"], weight="semibold")
-    bg_img.alpha_composite(P.rrect(W, H, (12, 56, W - 12, H - 12), 6, t["card"]))
-    mid = (tx0 + tx1) // 2
-    for label, x, align in (("−20 dB", tx0, "left"), ("0 dB", mid, "center"), ("+20 dB", tx1, "right")):
-        P.text(bg_img, x, 80, label, 11, t["text_dim"], align=align)
-    bg_img.alpha_composite(P.rrect(W, H, (mid, 84, mid + 1, H - 22), 0, P.mix(t["card"], t["text_dim"], .45)))
-    for label, _, y in rows:
-        P.text(bg_img, 28, y + 22, label, 14, t["text"])
-        bg_img.alpha_composite(P.rrect(W, H, (tx0, y + 9, tx1, y + 25), 4, t["track"]))
-    bg_img.alpha_composite(P.rrect(W, H, (28, bands_top - 5, W - 28, bands_top - 4), 0, t["divider"]))
-    L.image(art.get("eq.bg", bg_img), 0, 0, action="move", hint="bg")
-
-    for label, value, y in rows:
-        progress(L, art, x0=tx0, x1=tx1, y=y + 9, h=16, inset=2, r_track=4, r_fill=3, handle=(8, 24, 4),
-                 anchor_l="tl", anchor_s="tl", bg=lambda x0, y0, x1, y1: bg_img.crop((x0, y0, x1, y1)),
-                 value=value, tip=label, visible=None, handle_on="card",
-                 handle_keys=("eq_handle", "accent_hover", "accent_down"), draw_track=False,
-                 name="eq" + value.split(".")[1].replace("(", "").replace(")", ""))
-    off, on = toggle_images(art, "card_outer")
-    L.toggle("equalizer.isEnabled", off, on, "equalizer.enable()", "equalizer.disable()",
-               "Turn the equalizer on", "Turn the equalizer off", x=W - 20 - 36 - 10 - 64, y=14)
-    L.button(art.window_button("close", on="card_outer"), W - 48, 16, "eqwin.hide()", "Close")
-    return L
-
-
 # --- media tracks ------------------------------------------------------------------
 
 def tracks_layout(skin, win, t, page):
@@ -745,10 +693,9 @@ def menus(skin):
 MAIN_KINDS = ("full", "side", "mini")
 
 
-def build(start="dark_full", show_eq=False, preview_fsc=False, *, dist_dir=None):
-    """start: the layout the main window opens with (VLC remembers the last one used
-    after that). show_eq opens the equalizer too. preview_fsc renames the fullscreen
-    controller so it opens as an ordinary window. The last two are for screenshots.
+def build(start="dark_full", preview_fsc=False, *, dist_dir=None):
+    """Use `start` until VLC has a saved layout. `preview_fsc` opens the fullscreen
+    controller as an ordinary window for screenshots.
     dist_dir lets the Windows test player build the same skin in its own folder."""
     dist = ROOT / "dist" if dist_dir is None else Path(dist_dir)
     output = dist / NAME
@@ -770,14 +717,12 @@ def build(start="dark_full", show_eq=False, preview_fsc=False, *, dist_dir=None)
             mini_layout(skin, main, t)
         else:
             full_layout(skin, main, t, kind)
-    eq = skin.window("eqwin", visible="true" if show_eq else "false", position="Center")
     subtitles = skin.window("subtitlewin", visible="false", position="Center")
     # The hidden window's active layout also holds the selected tab in the windowed player.
     preferences = skin.window("preferenceswin", visible="false", position="NorthEast", xmargin=10, ymargin=40)
     fsc = (skin.window("fscpreview", position="Center") if preview_fsc else
            skin.window("fullscreenController", position="South", ymargin="3%"))
     for t in (other(start_t), start_t):
-        eq_layout(skin, eq, t)
         tracks_layout(skin, subtitles, t, "video")
         tracks_layout(skin, subtitles, t, "audio")
         tracks_layout(skin, subtitles, t, "subtitles")
@@ -809,8 +754,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--start", default="dark_full", choices=[lid(t, k) for t in THEMES for k in MAIN_KINDS],
                     help="layout the main window opens with")
-    ap.add_argument("--show-eq", action="store_true", help="open the equalizer window at start")
     ap.add_argument("--preview-fsc", action="store_true",
                     help="show the fullscreen controller as a normal window (for screenshots)")
     a = ap.parse_args()
-    build(a.start, a.show_eq, a.preview_fsc)
+    build(a.start, preview_fsc=a.preview_fsc)

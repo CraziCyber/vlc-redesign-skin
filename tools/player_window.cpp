@@ -99,13 +99,17 @@ void click_layout(HWND window, LPARAM position, bool release_only, const RECT &b
         SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(mouse.x, mouse.y));
 }
 
+void remove_saved_window(std::string &config, std::string_view entry) {
+    const auto begin = config.find(entry);
+    if (begin == std::string::npos)
+        return;
+    const auto end = config.find(']', begin);
+    if (end != std::string::npos)
+        config.erase(begin, end - begin + 1);
+}
+
 void dismiss_saved_preferences(std::string &config) {
-    const auto panel = config.find("[\"preferenceswin\" ");
-    if (panel != std::string::npos) {
-        const auto end = config.find(']', panel);
-        if (end != std::string::npos)
-            config.erase(panel, end - panel + 1);
-    }
+    remove_saved_window(config, "[\"preferenceswin\" ");
     const auto main = config.find(main_entry);
     if (main == std::string::npos)
         return;
@@ -125,6 +129,8 @@ void restore_startup_bounds(void *vlc) {
     if (!saved)
         return;
     std::string config(saved.get());
+    // Skins2 rejects saved layouts that refer to a removed window.
+    remove_saved_window(config, "[\"eqwin\" ");
     dismiss_saved_preferences(config);
     if (config != saved.get())
         config_PutPsz(vlc, option, config.c_str());

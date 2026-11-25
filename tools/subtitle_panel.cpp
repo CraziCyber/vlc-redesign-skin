@@ -98,6 +98,7 @@ using SubtitleRequest = std::shared_ptr<const LocalSubtitle>;
 
 std::atomic<VlcInterface *> context_interface{nullptr};
 std::atomic<HWND> context_target{nullptr};
+std::atomic<WPARAM> track_panel_revision{0};
 std::mutex local_subtitles_mutex;
 std::map<std::string, SubtitleRequest> local_subtitles;
 std::atomic_bool has_local_subtitles{false};
@@ -106,17 +107,18 @@ constexpr wchar_t host_class[] = L"VlcRedesignSubtitleTracks";
 constexpr wchar_t no_devices_label[] = L"No output devices available";
 // Match the layout dimensions and section positions in build.py.
 constexpr int panel_width = 368, video_height = 481, audio_height = 504, subtitles_height = 480;
-constexpr int equalizer_width = 400, equalizer_height = 496;
-constexpr LONG equalizer_offset = -42;
+constexpr LONG audio_button_offset = -42;
 constexpr int list_x = 26, list_y = 96, list_width = panel_width - 52;
 constexpr int row_height = 24, visible_tracks = 10, audio_rows = 4;
-constexpr int devices_y = 280, device_rows = 6, refresh_y = 241, refresh_size = 32;
+constexpr int devices_divider_y = 228, devices_y = 280, device_rows = 6;
+constexpr int refresh_x = panel_width - 52 - list_x, refresh_y = 241, refresh_size = 32;
 constexpr int preferences_margin = 18, preferences_height = 32;
 constexpr int subtitle_body_height = subtitles_height - list_y - preferences_margin - preferences_height;
 constexpr int external_header_height = 38, min_embedded_rows = 4;
 constexpr LONG popup_right_margin = 16, popup_gap = 20;
 constexpr int none_control = 1, track_control = 2, device_control = 3, refresh_control = 4;
 constexpr int external_control = 5, add_control = 6;
+constexpr UINT track_layout_changed = WM_APP + 1;
 constexpr DWORD dismiss_poll_ms = 15, dismiss_delay_ms = 50;
 constexpr int no_track = -1;
 constexpr char subtitle_description[] = "sub-description";
@@ -364,15 +366,25 @@ std::optional<RECT> subtitles_button(HWND window) {
     return RECT{client.right - 142, top, client.right - 112, top + 32};
 }
 
-std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height, LONG offset = 0) {
+std::optional<Page> track_button_page(HWND window, POINT point) {
+    auto button = subtitles_button(window);
+    if (!button)
+        return std::nullopt;
+    if (PtInRect(&*button, point))
+        return Page::subtitles;
+    OffsetRect(&*button, audio_button_offset, 0);
+    return PtInRect(&*button, point) ? std::optional(Page::audio) : std::nullopt;
+}
+
+std::optional<POINT> panel_position(HWND toolbar, LONG width, LONG height) {
     const auto button = subtitles_button(toolbar);
     POINT origin{};
     if (!button || !ClientToScreen(toolbar, &origin))
         return std::nullopt;
 
-    POINT position{origin.x + button->right + 112 - popup_right_margin - width + offset,
+    POINT position{origin.x + button->right + 112 - popup_right_margin - width,
                    origin.y + button->top - popup_gap - height};
-    const POINT button_center{origin.x + (button->left + button->right) / 2 + offset,
+    const POINT button_center{origin.x + (button->left + button->right) / 2,
                               origin.y + (button->top + button->bottom) / 2};
     MONITORINFO monitor{};
     monitor.cbSize = sizeof(monitor);
@@ -439,6 +451,10 @@ LRESULT CALLBACK anchor_popup(HWND window, UINT message, WPARAM wparam, LPARAM l
         // Repaint the entire skin after the move, including the areas around the native lists.
         if (flags & SWP_SHOWWINDOW || (flags & unchanged_geometry) != unchanged_geometry)
             InvalidateRect(window, nullptr, FALSE);
+        if (!(flags & SWP_NOSIZE)) {
+            if (const HWND body = FindWindowExW(window, nullptr, host_class, nullptr))
+                PostMessageW(body, track_layout_changed, 0, 0);
+        }
     }
     return result;
 }
@@ -494,39 +510,28 @@ void anchor_panel_to(HWND toolbar) {
     }
 }
 
-enum class ToolbarPopup : WPARAM { none, tracks, equalizer };
-
-bool equalizer_panel(HWND window) {
-    RECT bounds{};
-    return is_skin_window(window) && GetClientRect(window, &bounds) &&
-        bounds.right == equalizer_width && bounds.bottom == equalizer_height;
-}
-
 struct FullscreenPopup {
     HWND window = nullptr;
     POINT previous_position{};
     bool was_topmost = false;
 };
 
-thread_local FullscreenPopup fullscreen_tracks, fullscreen_equalizer;
+thread_local FullscreenPopup fullscreen_tracks;
 
-void restore_fullscreen_popup(FullscreenPopup &popup, bool tracks) {
-    const auto saved = std::exchange(popup, {});
-    if (GetWindowThreadProcessId(saved.window, nullptr) != GetCurrentThreadId() ||
-        !(tracks ? panel_page(saved.window).has_value() : equalizer_panel(saved.window)))
+void restore_fullscreen_tracks() {
+    const auto saved = std::exchange(fullscreen_tracks, {});
+    if (GetWindowThreadProcessId(saved.window, nullptr) != GetCurrentThreadId() || !panel_page(saved.window))
         return;
 
     POINT position = saved.previous_position;
-    if (tracks) {
-        RECT bounds{};
-        const HWND toolbar = context_target.load();
-        if (GetClientRect(saved.window, &bounds))
-            position = panel_position(toolbar, bounds.right, bounds.bottom).value_or(position);
-        RemoveWindowSubclass(anchor.toolbar, follow_toolbar, anchor_subclass);
-        anchor.toolbar = toolbar;
-        if (toolbar)
-            SetWindowSubclass(toolbar, follow_toolbar, anchor_subclass, 0);
-    }
+    RECT bounds{};
+    const HWND toolbar = context_target.load();
+    if (GetClientRect(saved.window, &bounds))
+        position = panel_position(toolbar, bounds.right, bounds.bottom).value_or(position);
+    RemoveWindowSubclass(anchor.toolbar, follow_toolbar, anchor_subclass);
+    anchor.toolbar = toolbar;
+    if (toolbar)
+        SetWindowSubclass(toolbar, follow_toolbar, anchor_subclass, 0);
     SetWindowPos(saved.window, saved.was_topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
                  position.x, position.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS);
     InvalidateRect(saved.window, nullptr, FALSE);
@@ -536,87 +541,47 @@ LRESULT CALLBACK follow_fullscreen(HWND window, UINT message, WPARAM wparam, LPA
     if (message == WM_NCDESTROY || (message == WM_WINDOWPOSCHANGED &&
         (reinterpret_cast<const WINDOWPOS *>(lparam)->flags & SWP_HIDEWINDOW))) {
         RemoveWindowSubclass(window, follow_fullscreen, id);
-        restore_fullscreen_popup(fullscreen_tracks, true);
-        restore_fullscreen_popup(fullscreen_equalizer, false);
+        restore_fullscreen_tracks();
     }
     return DefSubclassProc(window, message, wparam, lparam);
 }
 
-void raise_fullscreen_popup(HWND toolbar, ToolbarPopup kind) {
+void raise_fullscreen_tracks(HWND toolbar) {
     const HWND surface = fullscreen_owner(toolbar);
-    if (!surface || (kind != ToolbarPopup::tracks && kind != ToolbarPopup::equalizer))
+    if (!surface)
         return;
-    const bool tracks = kind == ToolbarPopup::tracks;
-    struct Lookup { bool tracks; HWND window; } lookup{tracks, nullptr};
+    HWND panel = nullptr;
     EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL {
-        auto &lookup = *reinterpret_cast<Lookup *>(data);
-        if (!IsWindowVisible(window) || !(lookup.tracks ? panel_page(window).has_value() : equalizer_panel(window)))
+        if (!IsWindowVisible(window) || !panel_page(window))
             return TRUE;
-        lookup.window = window;
+        *reinterpret_cast<HWND *>(data) = window;
         return FALSE;
-    }, reinterpret_cast<LPARAM>(&lookup));
+    }, reinterpret_cast<LPARAM>(&panel));
 
     RECT bounds{};
-    if (!lookup.window || !GetWindowRect(lookup.window, &bounds) ||
-        !SetWindowSubclass(surface, follow_fullscreen, 1, 0))
+    if (!panel || !GetWindowRect(panel, &bounds) || !SetWindowSubclass(surface, follow_fullscreen, 1, 0))
         return;
-    auto &saved = tracks ? fullscreen_tracks : fullscreen_equalizer;
-    if (saved.window != lookup.window) {
-        const auto styles = GetWindowLongPtrW(lookup.window, GWL_EXSTYLE);
-        saved = {lookup.window, {bounds.left, bounds.top}, (styles & WS_EX_TOPMOST) != 0};
+    if (fullscreen_tracks.window != panel) {
+        const auto styles = GetWindowLongPtrW(panel, GWL_EXSTYLE);
+        fullscreen_tracks = {panel, {bounds.left, bounds.top}, (styles & WS_EX_TOPMOST) != 0};
     }
-    const auto position = panel_position(toolbar, bounds.right - bounds.left, bounds.bottom - bounds.top,
-                                         tracks ? 0 : equalizer_offset).value_or(POINT{bounds.left, bounds.top});
+    const auto position = panel_position(toolbar, bounds.right - bounds.left, bounds.bottom - bounds.top)
+        .value_or(POINT{bounds.left, bounds.top});
     // Raise the panel above VLC's topmost fullscreen video without taking focus.
-    SetWindowPos(lookup.window, HWND_TOPMOST, position.x, position.y, 0, 0,
+    SetWindowPos(panel, HWND_TOPMOST, position.x, position.y, 0, 0,
                  SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS);
-    InvalidateRect(lookup.window, nullptr, FALSE);
-}
-
-UINT fullscreen_popup_message() {
-    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.RaiseFullscreenPopup");
-    return id;
-}
-
-bool redesign_is_selected(void *vlc);
-
-void handle_toolbar_click(const MSG &message) {
-    if (message.message != WM_LBUTTONDOWN && message.message != WM_LBUTTONDBLCLK && message.message != WM_LBUTTONUP)
-        return;
-    struct Press { HWND toolbar; ToolbarPopup popup; };
-    thread_local Press pressed{};
-    const POINT cursor{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
-    ToolbarPopup popup = ToolbarPopup::none;
-    const HWND fullscreen = fullscreen_owner(message.hwnd);
-    if (auto button = subtitles_button(message.hwnd)) {
-        if (PtInRect(&*button, cursor)) {
-            popup = ToolbarPopup::tracks;
-        } else if (fullscreen) {
-            OffsetRect(&*button, equalizer_offset, 0);
-            if (PtInRect(&*button, cursor))
-                popup = ToolbarPopup::equalizer;
-        }
-    }
-    if (message.message == WM_LBUTTONUP) {
-        const auto press = std::exchange(pressed, {});
-        if (press.toolbar == message.hwnd && press.popup == popup && popup != ToolbarPopup::none) {
-            if (popup == ToolbarPopup::tracks)
-                anchor_panel_to(message.hwnd);
-            if (fullscreen) {
-                const auto interface = context_interface.load();
-                if (interface && redesign_is_selected(interface->libvlc))
-                    PostMessageW(message.hwnd, fullscreen_popup_message(), static_cast<WPARAM>(popup), 0);
-            }
-        }
-    } else {
-        pressed = {message.hwnd, popup};
-    }
+    InvalidateRect(panel, nullptr, FALSE);
 }
 
 void press_skin_button(HWND window, LPARAM position) {
     SendMessageW(window, WM_MOUSEMOVE, 0, position);
     SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
     SendMessageW(window, WM_LBUTTONUP, 0, position);
+}
+
+void press_track_tab(HWND panel, Page page) {
+    constexpr int tab_centers[] = {188, 72, 304};  // Audio, Video, Subtitles in build.py.
+    press_skin_button(panel, MAKELPARAM(tab_centers[static_cast<int>(page)], 23));
 }
 
 void close_skin_panel(HWND window) {
@@ -627,8 +592,60 @@ void close_skin_panel(HWND window) {
     // Hide the native window before the close button can raise it. This runs on
     // the skin's UI thread so a layout change cannot come between the messages.
     ShowWindow(window, SW_HIDE);
-    constexpr int tab_centers[] = {188, 72, 304};  // Audio, Video, Subtitles in build.py.
-    press_skin_button(window, MAKELPARAM(tab_centers[static_cast<int>(*page)], 23));
+    press_track_tab(window, *page);
+}
+
+bool redesign_is_selected(void *vlc);
+
+HWND visible_tracks_panel() {
+    PanelWindow panel;
+    EnumThreadWindows(GetCurrentThreadId(), find_panel, reinterpret_cast<LPARAM>(&panel));
+    return IsWindowVisible(panel.hwnd) ? panel.hwnd : nullptr;
+}
+
+UINT fullscreen_popup_message() {
+    static const UINT id = RegisterWindowMessageW(L"VlcRedesign.RaiseFullscreenPopup");
+    return id;
+}
+
+bool handle_toolbar_click(const MSG &message) {
+    if (message.message != WM_LBUTTONDOWN && message.message != WM_LBUTTONDBLCLK && message.message != WM_LBUTTONUP)
+        return false;
+
+    struct Press { HWND toolbar; Page page; bool forward_to_panel; };
+    thread_local Press pressed{};
+    const POINT cursor{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+    const auto page = track_button_page(message.hwnd, cursor);
+    const auto press = std::exchange(pressed, {});
+    if (press.forward_to_panel && GetCapture() == press.toolbar)
+        ReleaseCapture();
+    if (message.message == WM_LBUTTONUP) {
+        if (!press.toolbar || press.toolbar != message.hwnd)
+            return false;
+        if (page && press.page == *page) {
+            ++track_panel_revision;
+            anchor_panel_to(message.hwnd);
+            if (press.forward_to_panel) {
+                // Use the open panel's tab action for the same behavior as its tab strip.
+                if (const HWND panel = visible_tracks_panel())
+                    press_track_tab(panel, *page);
+                else
+                    press_skin_button(message.hwnd, message.lParam);
+            }
+            if (fullscreen_owner(message.hwnd))
+                PostMessageW(message.hwnd, fullscreen_popup_message(), 0, 0);
+        }
+        return press.forward_to_panel;
+    }
+
+    const auto interface = context_interface.load();
+    if (!page || !interface || !redesign_is_selected(interface->libvlc))
+        return false;
+    const bool forward_to_panel = visible_tracks_panel() != nullptr;
+    pressed = {message.hwnd, *page, forward_to_panel};
+    if (forward_to_panel)
+        SetCapture(message.hwnd);
+    return forward_to_panel;
 }
 
 struct PreferencesWindows {
@@ -1084,13 +1101,14 @@ void run_context_action(HWND window, HWND surface, const char *action, context_m
         open_context_preferences(window, position);
     } else if (command != Command::none) {
         const bool tracks = command == Command::video_tracks || command == Command::audio_tracks || command == Command::subtitles;
-        const bool equalizer = command == Command::eq;
-        const HWND toolbar = (tracks || equalizer) ? toolbar_for_fullscreen(surface) : nullptr;
-        if (tracks)
+        const HWND toolbar = tracks ? toolbar_for_fullscreen(surface) : nullptr;
+        if (tracks) {
+            ++track_panel_revision;
             anchor_panel_to(toolbar ? toolbar : window);
+        }
         press_skin_button(window, position);
         if (toolbar)
-            raise_fullscreen_popup(toolbar, tracks ? ToolbarPopup::tracks : ToolbarPopup::equalizer);
+            raise_fullscreen_tracks(toolbar);
     }
 }
 
@@ -1242,10 +1260,12 @@ LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
         auto &message = *reinterpret_cast<MSG *>(data);
         if (message.message == fullscreen_popup_message()) {
             message.message = WM_NULL;
-            raise_fullscreen_popup(message.hwnd, static_cast<ToolbarPopup>(message.wParam));
+            raise_fullscreen_tracks(message.hwnd);
         } else if (message.message == dismiss_message()) {
+            // A toolbar action can switch tabs while an outside dismissal is queued.
+            if (message.wParam == track_panel_revision.load())
+                close_skin_panel(message.hwnd);
             message.message = WM_NULL;
-            close_skin_panel(message.hwnd);
         } else if (message.message == add_subtitles_message()) {
             message.message = WM_NULL;
             open_add_subtitles(message.hwnd);
@@ -1264,11 +1284,10 @@ LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
                 message.message = WM_NULL;
         } else if (add_subtitles::handle_key(message) || context_menu::handle_message(message) ||
                    handle_playback_sidebar(message) || handle_hide_ui_shortcut(message) || handle_context_click(message) ||
-                   handle_playlist_button(message)) {
+                   handle_playlist_button(message) || handle_toolbar_click(message)) {
             message.message = WM_NULL;
         } else {
             handle_preferences_click(message);
-            handle_toolbar_click(message);
         }
     }
     return CallNextHookEx(nullptr, code, removal, data);
@@ -1316,7 +1335,7 @@ private:
     DWORD skin_thread_ = 0;
     std::vector<std::pair<DWORD, HHOOK>> video_hooks_;
     HWND host_ = nullptr, list_ = nullptr, none_ = nullptr;
-    HWND device_list_ = nullptr, external_list_ = nullptr, add_button_ = nullptr;
+    HWND device_list_ = nullptr, refresh_button_ = nullptr, external_list_ = nullptr, add_button_ = nullptr;
     HFONT font_ = nullptr;
     Page page_ = Page::subtitles;
     InputRef input_{nullptr, vlc_object_release};
@@ -1336,7 +1355,8 @@ private:
     std::string selected_device_;
     COLORREF background_ = dark_panel;
     HWND click_panel_ = nullptr;
-    bool mouse_down_ = false, outside_press_ = false;
+    bool mouse_down_ = false;
+    std::optional<WPARAM> outside_press_;
     ULONGLONG dismiss_at_ = 0;
 
     const char *track_variable() const {
@@ -1494,10 +1514,10 @@ private:
         }
     }
 
-    void request_dismiss(HWND window) {
+    void request_dismiss(HWND window, WPARAM revision) {
         const UINT message = dismiss_message();
-        if (message && watch_skin_thread(window))
-            PostMessageW(window, message, 0, 0);
+        if (message && revision == track_panel_revision.load() && watch_skin_thread(window))
+            PostMessageW(window, message, revision, 0);
     }
 
     void dismiss_outside_click() {
@@ -1505,28 +1525,39 @@ private:
         const HWND panel = parent && IsWindowVisible(parent) ? parent : nullptr;
         if (panel != click_panel_) {
             click_panel_ = panel;
-            mouse_down_ = outside_press_ = false;
+            mouse_down_ = false;
+            outside_press_.reset();
             dismiss_at_ = 0;
         }
         if (!panel)
             return;
 
+        const auto revision = track_panel_revision.load();
         const bool down = (GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
                            GetAsyncKeyState(VK_MBUTTON)) & 0x8000;
         const auto now = GetTickCount64();
         if (down && !mouse_down_) {
-            POINT point;
-            outside_press_ = GetCursorPos(&point) && GetAncestor(WindowFromPoint(point), GA_ROOT) != panel;
+            POINT point{};
+            outside_press_.reset();
+            if (GetCursorPos(&point)) {
+                const HWND target = GetAncestor(WindowFromPoint(point), GA_ROOT);
+                const bool track_button = (target == context_target.load() ||
+                    (GetWindowThreadProcessId(target, nullptr) == skin_thread_ && fullscreen_owner(target))) &&
+                    ScreenToClient(target, &point) && track_button_page(target, point).has_value();
+                if (target != panel && !track_button)
+                    outside_press_ = revision;
+            }
             dismiss_at_ = 0;
         } else if (!down && mouse_down_ && outside_press_) {
-            // Let the real click run first, including a click on the toolbar's own close toggle.
+            // Let the outside click run before closing the panel.
             dismiss_at_ = now + dismiss_delay_ms;
         }
         mouse_down_ = down;
 
         if (dismiss_at_ && now >= dismiss_at_) {
             dismiss_at_ = 0;
-            request_dismiss(panel);
+            if (const auto press = std::exchange(outside_press_, std::nullopt))
+                request_dismiss(panel, *press);
         }
     }
 
@@ -1551,6 +1582,10 @@ private:
                 watch_skin_thread(toolbar);
         }
         watch_video_windows();
+        update_track_panel(window);
+    }
+
+    void update_track_panel(const PanelWindow &window) {
         if (!window.hwnd || !IsWindowVisible(window.hwnd)) {
             if (host_)
                 DestroyWindow(host_);
@@ -1562,34 +1597,71 @@ private:
             devices_.clear();
             return;
         }
-        if (host_ && (GetParent(host_) != window.hwnd || window.page != page_))
+        if (host_ && GetParent(host_) != window.hwnd)
             DestroyWindow(host_);
+        const bool new_host = !host_;
+        const bool new_page = new_host || window.page != page_;
         page_ = window.page;
 
         const COLORREF color = panel_background(window.hwnd);
-        if ((color == light_panel || color == dark_panel) && color != background_) {
+        const bool recolor = (color == light_panel || color == dark_panel) && color != background_;
+        if (recolor)
             background_ = color;
-            if (host_)
-                RedrawWindow(host_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
-        }
 
-        const bool new_host = !host_;
-        if (new_host) {
-            const bool audio = page_ == Page::audio;
-            const bool subtitles = page_ == Page::subtitles;
-            const int x = subtitles ? 0 : list_x;
-            const int width = subtitles ? panel_width : audio ? panel_width - list_x - 18 : list_width;
-            const int height = subtitles ? subtitle_body_height : audio ? devices_y - list_y + device_rows * row_height
-                                                                       : row_height * (visible_tracks + 1);
-            if (!CreateWindowExW(WS_EX_NOPARENTNOTIFY, host_class, L"Media Tracks",
-                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, x, list_y,
-                                 width, height, window.hwnd, nullptr, module_, this))
-                return;
-        }
+        if (new_host && !CreateWindowExW(WS_EX_NOPARENTNOTIFY | WS_EX_COMPOSITED, host_class, L"Media Tracks",
+                                        WS_CHILD | WS_CLIPCHILDREN, 0, list_y, panel_width, 0,
+                                        window.hwnd, nullptr, module_, this))
+            return;
 
-        refresh_tracks(new_host);
+        if (new_page)
+            layout_track_panel();
+        refresh_tracks(new_page);
         if (page_ == Page::audio)
-            refresh_devices(new_host);
+            refresh_devices(new_page);
+        if (new_host)
+            ShowWindow(host_, SW_SHOWNOACTIVATE);
+        if (new_page || recolor)
+            RedrawWindow(window.hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+    }
+
+    void layout_track_panel() {
+        const bool subtitles = page_ == Page::subtitles, audio = page_ == Page::audio;
+        const int x = subtitles ? 0 : list_x;
+        const int width = subtitles ? panel_width : audio ? panel_width - list_x - 18 : list_width;
+        const int height = subtitles ? subtitle_body_height : audio ? devices_y - list_y + device_rows * row_height
+                                                                    : row_height * (visible_tracks + 1);
+        constexpr UINT layout = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
+        SetWindowPos(host_, nullptr, x, list_y, width, height, layout);
+        shape_track_panel(audio, width, height);
+        MoveWindow(none_, subtitles ? list_x : 0, 0, list_width, row_height, FALSE);
+        if (!subtitles)
+            MoveWindow(list_, 0, row_height, list_width, track_rows() * row_height, FALSE);
+        constexpr UINT visibility = layout | SWP_NOSIZE | SWP_NOMOVE;
+        for (const HWND control : {add_button_, external_list_})
+            SetWindowPos(control, nullptr, 0, 0, 0, 0, visibility | (subtitles ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+        for (const HWND control : {refresh_button_, device_list_})
+            SetWindowPos(control, nullptr, 0, 0, 0, 0, visibility | (audio ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    }
+
+    void shape_track_panel(bool audio, int width, int height) {
+        if (!audio) {
+            SetWindowRgn(host_, nullptr, FALSE);
+            return;
+        }
+
+        // The skin paints the Output Device heading between the two native lists.
+        const HRGN body = CreateRectRgn(0, 0, width, devices_divider_y - list_y);
+        const HRGN section = CreateRectRgn(0, devices_y - list_y, width, height);
+        const bool valid = body && section && CombineRgn(body, body, section, RGN_OR) != ERROR &&
+            SetRectRgn(section, refresh_x, refresh_y - list_y, refresh_x + refresh_size,
+                       refresh_y - list_y + refresh_size) && CombineRgn(body, body, section, RGN_OR) != ERROR;
+        if (section)
+            DeleteObject(section);
+        if (valid && SetWindowRgn(host_, body, FALSE))
+            return;
+        if (body)
+            DeleteObject(body);
+        SetWindowRgn(host_, nullptr, FALSE);
     }
 
     void clear_pending_subtitle() {
@@ -1735,15 +1807,15 @@ private:
     }
 
     void layout_subtitle_tracks() {
-        MoveWindow(list_, list_x, row_height, list_width, embedded_rows_ * row_height, TRUE);
+        MoveWindow(list_, list_x, row_height, list_width, embedded_rows_ * row_height, FALSE);
         const int divider = external_header_y();
-        MoveWindow(add_button_, panel_width - 52, divider + 4, 32, 32, TRUE);
+        MoveWindow(add_button_, panel_width - 52, divider + 4, 32, 32, FALSE);
         MoveWindow(external_list_, list_x, divider + external_header_height,
-                   list_width, external_rows() * row_height, TRUE);
-        InvalidateRect(host_, nullptr, FALSE);
+                   list_width, external_rows() * row_height, FALSE);
+        RedrawWindow(host_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
-    void refresh_tracks(bool new_host) {
+    void refresh_tracks(bool new_page) {
         InputRef current(playlist_CurrentInput(playlist_), vlc_object_release);
         const bool new_input = current.get() != input_.get();
         if (new_input)
@@ -1752,7 +1824,8 @@ private:
         auto entries = media_tracks(current.get(), variable);
         EnableWindow(none_, !entries.empty());
         std::vector<Track> external;
-        if (page_ == Page::subtitles && current.get() == local_input_.get()) {
+        const bool subtitles = page_ == Page::subtitles;
+        if (subtitles && current.get() == local_input_.get()) {
             entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const Track &track) {
                 const auto loaded = std::find_if(loaded_local_subtitles_.begin(), loaded_local_subtitles_.end(),
                     [&](const LoadedSubtitle &entry) { return entry.track.id == track.id; });
@@ -1767,16 +1840,16 @@ private:
         if (current)
             var_Get(current.get(), variable, &selection);
 
-        const bool reset = new_host || new_input;
+        const bool reset = new_page || new_input;
         const bool selection_changed = selected_track_ != selection.integer;
         const bool reload = reset || entries != tracks_;
-        const bool reload_external = external_list_ && (reset || external != external_tracks_);
+        const bool reload_external = subtitles && (reset || external != external_tracks_);
         selected_track_ = selection.integer;
 
         bool layout_changed = false;
-        if (external_list_) {
+        if (subtitles) {
             const auto rows = std::clamp(static_cast<int>(entries.size()), min_embedded_rows, visible_tracks);
-            layout_changed = new_host || rows != embedded_rows_;
+            layout_changed = new_page || rows != embedded_rows_;
             if (layout_changed) {
                 embedded_rows_ = rows;
                 layout_subtitle_tracks();
@@ -1788,7 +1861,7 @@ private:
             update_list(list_, tracks_, selected_track_, reload, top, track_rows());
             InvalidateRect(none_, nullptr, TRUE);
         }
-        if (external_list_ && (reload_external || selection_changed || layout_changed)) {
+        if (subtitles && (reload_external || selection_changed || layout_changed)) {
             const auto top = reset ? 0 : SendMessageW(external_list_, LB_GETTOPINDEX, 0, 0);
             external_tracks_ = std::move(external);
             update_list(external_list_, external_tracks_, selected_track_, reload_external, top, external_rows());
@@ -1920,23 +1993,25 @@ private:
         FillRect(item.hDC, &vertical, brush);
     }
 
-    void paint_subtitle_body(HWND window) const {
+    void paint_track_body(HWND window) const {
         PAINTSTRUCT paint{};
         const HDC dc = BeginPaint(window, &paint);
         const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
         SetDCBrushColor(dc, background_);
         FillRect(dc, &paint.rcPaint, brush);
-        const auto y = external_header_y();
-        const RECT divider{0, y, panel_width, y + 1};
-        SetDCBrushColor(dc, background_ == light_panel ? RGB(162, 162, 162) : RGB(38, 38, 38));
-        FillRect(dc, &divider, brush);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, subtitle_header_color());
-        const auto previous = font_ ? SelectObject(dc, font_) : nullptr;
-        RECT header{list_x, y + 4, panel_width - 52, y + 36};
-        DrawTextW(dc, L"External Tracks", -1, &header, DT_SINGLELINE | DT_VCENTER);
-        if (previous)
-            SelectObject(dc, previous);
+        if (page_ == Page::subtitles) {
+            const auto y = external_header_y();
+            const RECT divider{0, y, panel_width, y + 1};
+            SetDCBrushColor(dc, background_ == light_panel ? RGB(162, 162, 162) : RGB(38, 38, 38));
+            FillRect(dc, &divider, brush);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, subtitle_header_color());
+            const auto previous = font_ ? SelectObject(dc, font_) : nullptr;
+            RECT header{list_x, y + 4, panel_width - 52, y + 36};
+            DrawTextW(dc, L"External Tracks", -1, &header, DT_SINGLELINE | DT_VCENTER);
+            if (previous)
+                SelectObject(dc, previous);
+        }
         EndPaint(window, &paint);
     }
 
@@ -1957,28 +2032,20 @@ private:
 
     bool create_controls(HWND hwnd) {
         host_ = hwnd;
-        const int x = page_ == Page::subtitles ? list_x : 0;
-        none_ = make_button(none_control, L"None", x, 0, list_width, row_height, WS_DISABLED);
-        list_ = make_list(track_control, x, row_height, track_rows());
-        if (!none_ || !list_)
-            return false;
-        if (page_ == Page::subtitles) {
-            const auto y = external_header_y();
-            add_button_ = make_button(add_control, L"Add Subtitles", panel_width - 52, y + 4, 32, 32);
-            external_list_ = make_list(external_control, x, y + external_header_height, external_rows());
-            return add_button_ && external_list_;
-        }
-        if (page_ != Page::audio)
-            return true;
-
-        const int refresh_x = panel_width - 52 - list_x;
-        const auto refresh_button = make_button(refresh_control, L"Refresh output devices",
-                                                refresh_x, refresh_y - list_y, refresh_size, refresh_size);
+        none_ = make_button(none_control, L"None", 0, 0, list_width, row_height, WS_DISABLED);
+        list_ = make_list(track_control, 0, row_height, track_rows());
+        const int divider = external_header_y();
+        add_button_ = make_button(add_control, L"Add Subtitles", panel_width - 52, divider + 4, 32, 32);
+        external_list_ = make_list(external_control, list_x, divider + external_header_height, external_rows());
+        refresh_button_ = make_button(refresh_control, L"Refresh output devices",
+                                      refresh_x, refresh_y - list_y, refresh_size, refresh_size);
         device_list_ = make_list(device_control, 0, devices_y - list_y, device_rows);
-        return refresh_button && device_list_;
+        return none_ && list_ && add_button_ && external_list_ && refresh_button_ && device_list_;
     }
 
     void control_changed(WORD control, WORD notification) {
+        if (panel_page(GetParent(host_)) != page_)
+            return;
         if (control == none_control && notification == BN_CLICKED) {
             select_track(no_track);
         } else if (control == add_control && notification == BN_CLICKED) {
@@ -2010,12 +2077,17 @@ private:
         switch (msg) {
         case WM_CREATE:
             return panel->create_controls(hwnd) ? 0 : -1;
+        case track_layout_changed: {
+            const HWND parent = GetParent(hwnd);
+            if (const auto page = panel_page(parent); page && *page != panel->page_ && IsWindowVisible(parent))
+                panel->update_track_panel({parent, *page});
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
         case WM_PAINT:
-            if (panel->page_ == Page::subtitles) {
-                panel->paint_subtitle_body(hwnd);
-                return 0;
-            }
-            break;
+            panel->paint_track_body(hwnd);
+            return 0;
         case WM_MEASUREITEM:
             reinterpret_cast<MEASUREITEMSTRUCT *>(lp)->itemHeight = row_height;
             return TRUE;
@@ -2031,7 +2103,7 @@ private:
         case WM_DESTROY:
             panel->host_ = nullptr;
             panel->list_ = panel->none_ = panel->device_list_ = nullptr;
-            panel->add_button_ = panel->external_list_ = nullptr;
+            panel->refresh_button_ = panel->add_button_ = panel->external_list_ = nullptr;
             break;
         }
         return DefWindowProcW(hwnd, msg, wp, lp);

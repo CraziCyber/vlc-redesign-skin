@@ -13,7 +13,7 @@ This installer requires **VLC 3.0.24 (64-bit) on Windows**.
 
 1. Clone this branch and close VLC completely.
 2. Open `dist/Install-VLC-Subtitles.cmd` from the cloned folder. Approve the administrator prompt if Windows displays it.
-3. Open VLC from your usual shortcut and play a file. The **Subtitles** button opens the panel. Use **Video**, **Audio** and **Subtitles** to select embedded tracks, or choose an output device under **Audio**. The video and subtitle lists show up to ten tracks at a time and scroll to the rest.
+3. Open VLC from your usual shortcut and play a file. The **Audio** and **Subtitles** buttons open their respective tabs in the track panel. Use **Video**, **Audio** and **Subtitles** to select embedded tracks, or choose an output device under **Audio**. The video and subtitle lists show up to ten tracks at a time and scroll to the rest.
 
 The installer adds the subtitle module to VLC and installs and selects `VLC-Redesign.vlt`. It backs up existing VLC settings before changing them. Run the installer again to update an existing setup.
 
@@ -54,7 +54,7 @@ Scroll to **Appearance** to set the font, colors, offset, size and outline, back
 - The player, in dark and light
 - A playlist sidebar
 - A mini player
-- An equalizer
+- An equalizer in the preferences sidebar under **Audio**
 - Controls in fullscreen
 
 The ••• menu switches theme and opens the mini player and playlist.

@@ -21,7 +21,6 @@ SKIN_ACTIONS = {
     "change_skin": "dialogs.changeSkin()",
     "vlc_menu": "dialogs.popup()",
     "on_top": "vlc.onTop()",
-    "eq": "eqwin.show()",
     "video_tracks": "subtitlewin.setLayout({theme}_video);subtitlewin.show()",
     "audio_tracks": "subtitlewin.setLayout({theme}_audio);subtitlewin.show()",
     "subtitles": "subtitlewin.setLayout({theme}_subtitles);subtitlewin.show()",

@@ -309,8 +309,7 @@ struct Menu {
             break;
         case Group::audio:
             fill(submenu, {{L"Mute / Unmute", "vol-mute"}, {L"Volume Up", "vol-up"},
-                           {L"Volume Down", "vol-down"}, {}, {L"Audio Tracks and Devices...", nullptr, S::audio_tracks},
-                           {L"Equalizer", nullptr, S::eq}});
+                           {L"Volume Down", "vol-down"}, {}, {L"Audio Tracks and Devices...", nullptr, S::audio_tracks}});
             break;
         case Group::subtitle:
             fill(submenu, {{L"Subtitle Tracks...", nullptr, S::subtitles}, {L"Cycle Subtitle Track", "subtitle-track"},

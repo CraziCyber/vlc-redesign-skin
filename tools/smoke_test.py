@@ -13,7 +13,7 @@ Leave the PC alone while it runs (about two minutes): native menus close when an
 window takes focus, so using the PC meanwhile breaks the menu checks.
 
 Click positions follow the layouts in build.py at their default sizes (1280 x 720 player,
-391 x 339 mini player, 400 x 496 equalizer); move a control there and update it here.
+391 x 339 mini player, 368 x 504 audio track panel). Update the click positions when a control moves.
 """
 import base64
 import ctypes
@@ -263,20 +263,23 @@ def full_player():
     back = v.wait(lambda s: s.get("title") == title).get("title")
     check("previous button goes back", back == title, f"{back!r}")
 
-    v.click(W - 184 + 15, bar - 2)
-    time.sleep(.5)
-    wins = v.skin_windows()
-    eq = next((w for w in wins if v.size(w) == (400, 496)), None)
-    check("audio button opens the equalizer", eq is not None)
-    if eq:
-        v.shot("eq", eq)
-        v.click(270 + 50, 28, eq)                  # the toggle, where its knob goes when on
-        knob = v.shot("eq-on", eq).getpixel((270 + 50, 28))
-        check("equalizer toggle turns on", near(knob, ACCENT, 20), f"knob {knob}")
-        v.click(270 + 50, 28, eq)
-        v.click(352 + 18, 28, eq)                  # close
-        time.sleep(.5)
-        check("equalizer close button hides it", all(v.size(w) != (400, 496) for w in v.skin_windows()))
+    audio_x, subtitles_x = W - 184 + 15, W - 142 + 15
+    audio_icon = (W - 184, H - 43, W - 154, H - 11)
+    v.click(audio_x, bar - 2)
+    panel = next((w for w in v.skin_windows() if v.size(w) == (368, 504)), None)
+    check("audio button opens the Audio tab", panel is not None)
+    if panel:
+        v.shot("audio-tracks", panel)
+        active = v.shot("audio-active").crop(audio_icon)
+        check("audio button lights up", ACCENT in active.get_flattened_data())
+        v.click(subtitles_x, bar - 2)
+        check("subtitle button switches to Subtitles", any(v.size(w) == (368, 480) for w in v.skin_windows()))
+        v.click(audio_x, bar - 2)
+        check("audio button switches back to Audio", any(v.size(w) == (368, 504) for w in v.skin_windows()))
+        v.click(audio_x, bar - 2)
+        inactive = v.shot("audio-closed").crop(audio_icon)
+        check("pressing audio again closes the track panel and clears the accent",
+              all(v.size(w)[0] != 368 for w in v.skin_windows()) and ACCENT not in inactive.get_flattened_data())
 
     v.click(89 + 14, 20)                           # top bar sidebar toggle
     px = v.shot("sidebar").getpixel((300, 600))
