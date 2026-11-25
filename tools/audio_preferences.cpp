@@ -26,7 +26,8 @@ constexpr char filter_key[] = "audio-filter", stereo_key[] = "stereo-mode", dela
 constexpr char equalizer[] = "equalizer", preset_key[] = "equalizer-preset", bands_key[] = "equalizer-bands";
 constexpr char preamp_key[] = "equalizer-preamp", two_pass_key[] = "equalizer-2pass";
 constexpr char pitch_key[] = "pitch-shift", pitch_filter[] = "scaletempo_pitch";
-constexpr const char *filters[] = {"compressor", "spatializer", "stereo_widen"};
+constexpr char widener_filter[] = "stereo_widen";
+constexpr const char *filters[] = {"compressor", "spatializer", widener_filter};
 constexpr double ticks_per_second = 1000000;
 
 InputRef audio_input(VlcPlayer player) {
@@ -44,16 +45,23 @@ std::string string_option(VlcPlayer player, AudioOutput *output, const char *key
     return vlc_config::take_string(config_GetPsz(player.vlc, key));
 }
 
-bool contains_filter(std::string_view chain, std::string_view target) {
+std::size_t filter_position(std::string_view chain, std::string_view target) {
+    std::size_t position = 0;
     while (!chain.empty()) {
         const auto separator = chain.find(':');
         if (chain.substr(0, separator) == target)
-            return true;
+            return position;
         if (separator == chain.npos)
             break;
-        chain.remove_prefix(separator + 1);
+        const auto advance = separator + 1;
+        position += advance;
+        chain.remove_prefix(advance);
     }
-    return false;
+    return chain.npos;
+}
+
+bool contains_filter(std::string_view chain, std::string_view target) {
+    return filter_position(chain, target) != chain.npos;
 }
 
 void enable_filter(VlcPlayer player, const char *filter, bool enabled) {
@@ -95,7 +103,7 @@ std::array<float, N> read_filter_values(VlcPlayer player, AudioOutput *output, c
     for (std::size_t i = 0; i < values.size(); ++i) {
         const auto &parameter = parameters[i];
         VlcValue live{};
-        const float value = output && var_Get(output, parameter.key, &live) == 0
+        const float value = !parameter.reload && output && var_Get(output, parameter.key, &live) == 0
             ? live.real : config_GetFloat(player.vlc, parameter.key);
         values[i] = filter_value(parameter, value);
     }
@@ -159,6 +167,7 @@ Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
             : 0.0f,
         read_filter_values(player, output.get(), compressor_parameters),
         read_filter_values(player, output.get(), spatializer_parameters),
+        read_filter_values(player, output.get(), widener_parameters),
     };
 }
 
@@ -236,8 +245,27 @@ void set_filter(VlcPlayer player, Filter filter, bool enabled) {
 void set_filter_value(VlcPlayer player, const FilterParameter &parameter, float value) {
     const auto bounded = filter_value(parameter, value);
     config_PutFloat(player.vlc, parameter.key, bounded);
+    if (parameter.reload)
+        return;
     const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
     set_float(output.get(), parameter.key, bounded);
+}
+
+void reload_widener(VlcPlayer player) {
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    if (!output)
+        return;
+    const auto chain = string_option(player, output.get(), filter_key);
+    const auto position = filter_position(chain, widener_filter);
+    if (position == chain.npos)
+        return;
+
+    // Reload the filter on the audio thread. VLC's delay callback resizes its live buffer,
+    // and its crossfeed callback updates feedback. Restore the original filter order.
+    auto temporary = chain;
+    temporary.erase(position == 0 ? 0 : position - 1, std::size(widener_filter));
+    set_string(output.get(), filter_key, std::move(temporary));
+    set_string(output.get(), filter_key, chain);
 }
 
 void set_pitch(VlcPlayer player, float semitones) {

@@ -22,6 +22,8 @@ struct FilterParameter {
     const char *key;
     const wchar_t *label, *suffix;
     float minimum, maximum, initial;
+    int steps_per_unit = 10;
+    bool reload = false;
 };
 inline constexpr FilterParameter compressor_parameters[] = {
     {"compressor-rms-peak", L"RMS / Peak", L"", 0.0f, 1.0f, 0.2f},
@@ -39,8 +41,15 @@ inline constexpr FilterParameter spatializer_parameters[] = {
     {"spatializer-dry", L"Dry", L"", 0.0f, 1.0f, 0.5f},
     {"spatializer-damp", L"Damp", L"", 0.0f, 1.0f, 0.5f},
 };
+inline constexpr FilterParameter widener_parameters[] = {
+    {"stereowiden-delay", L"Delay Time", L" ms", 1.0f, 100.0f, 20.0f, 1, true},
+    {"stereowiden-feedback", L"Feedback Gain", L" %", 0.0f, 0.9f, 0.3f},
+    {"stereowiden-crossfeed", L"Crossfeed", L" %", 0.0f, 0.8f, 0.3f, 10, true},
+    {"stereowiden-dry-mix", L"Dry Mix", L" %", 0.0f, 1.0f, 0.8f},
+};
 using CompressorValues = std::array<float, std::size(compressor_parameters)>;
 using SpatializerValues = std::array<float, std::size(spatializer_parameters)>;
+using WidenerValues = std::array<float, std::size(widener_parameters)>;
 
 struct Settings {
     std::optional<double> delay;
@@ -51,6 +60,7 @@ struct Settings {
     float pitch;
     CompressorValues compressor_values;
     SpatializerValues spatializer_values;
+    WidenerValues widener_values;
 };
 
 struct Preset {
@@ -67,6 +77,7 @@ void set_equalizer_gains(VlcPlayer player, const EqualizerGains &gains);
 void set_two_pass(VlcPlayer player, bool enabled);
 void set_filter(VlcPlayer player, Filter filter, bool enabled);
 void set_filter_value(VlcPlayer player, const FilterParameter &parameter, float value);
+void reload_widener(VlcPlayer player);
 void set_pitch(VlcPlayer player, float semitones);
 
 class StereoTest {

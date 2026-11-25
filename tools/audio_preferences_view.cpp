@@ -23,16 +23,18 @@ constexpr int sync_y = 292, filters_y = 476, compressor_y = 756, spatializer_y =
 constexpr int widener_y = 1006, pitch_y = 1131, content_height = 1229;
 constexpr int expand_height = 48, detail_inset = 16, slider_units = 10;
 constexpr int equalizer_expand_y = filters_y + 154, compressor_expand_y = compressor_y + 57;
-constexpr int spatializer_expand_y = spatializer_y + 57;
+constexpr int spatializer_expand_y = spatializer_y + 57, widener_expand_y = widener_y + 57;
 constexpr int gain_spacing = 90, gain_start = equalizer_expand_y + 60;
 constexpr int detail_start = 87, detail_spacing = 76, detail_end = 47;
 constexpr int gain_count = std::size(EqualizerGains{});
 constexpr int compressor_count = std::size(compressor_parameters);
 constexpr int spatializer_count = std::size(spatializer_parameters);
+constexpr int widener_count = std::size(widener_parameters);
 constexpr int spatializer_steps_per_unit = 10;
 constexpr int equalizer_height = 60 + (gain_count - 1) * gain_spacing + 88;
 constexpr int compressor_height = detail_start + (compressor_count - 1) * detail_spacing + detail_end;
 constexpr int spatializer_height = detail_start + (spatializer_count - 1) * detail_spacing + detail_end;
+constexpr int widener_height = detail_start + (widener_count - 1) * detail_spacing + detail_end;
 constexpr UINT_PTR refresh_timer = 1;
 constexpr auto defaults_kind = track_defaults::Kind::audio;
 
@@ -40,7 +42,7 @@ enum Control {
     audio_track = 201, audio_language, stereo_test, stereo_mode, delay, delay_slider,
     equalizer, expand_equalizer, two_pass, compressor, expand_compressor, spatializer,
     expand_spatializer, widener, expand_widener, pitch_slider, choices, preset_choices, first_gain = 220,
-    first_compressor_slider = 250, first_spatializer_slider = 260,
+    first_compressor_slider = 250, first_spatializer_slider = 260, first_widener_slider = 270,
 };
 constexpr Control gain_edit(int index) { return static_cast<Control>(first_gain + 2 * index); }
 constexpr Control gain_slider(int index) { return static_cast<Control>(first_gain + 2 * index + 1); }
@@ -52,13 +54,20 @@ constexpr int compressor_index(int id) { return id - first_compressor_slider; }
 constexpr Control spatializer_slider(int index) { return static_cast<Control>(first_spatializer_slider + index); }
 constexpr bool is_spatializer_slider(int id) { return id >= first_spatializer_slider && id < first_spatializer_slider + spatializer_count; }
 constexpr int spatializer_index(int id) { return id - first_spatializer_slider; }
+constexpr Control widener_slider(int index) { return static_cast<Control>(first_widener_slider + index); }
+constexpr bool is_widener_slider(int id) { return id >= first_widener_slider && id < first_widener_slider + widener_count; }
+constexpr int widener_index(int id) { return id - first_widener_slider; }
 
 constexpr int spatializer_position(float value) {
     // VLC displays whole steps, including 8.0 for the native room size of 0.85.
     return static_cast<int>(value * spatializer_steps_per_unit);
 }
 
-enum class Section { equalizer, compressor, spatializer, page };
+constexpr int widener_position(const FilterParameter &parameter, float value) {
+    return static_cast<int>(value * parameter.steps_per_unit);
+}
+
+enum class Section { equalizer, compressor, spatializer, widener, page };
 struct SectionLayout {
     Control header, first_slider;
     int y, height;
@@ -67,6 +76,7 @@ constexpr SectionLayout sections[] = {
     {expand_equalizer, gain_slider(0), equalizer_expand_y, equalizer_height},
     {expand_compressor, compressor_slider(0), compressor_expand_y, compressor_height},
     {expand_spatializer, spatializer_slider(0), spatializer_expand_y, spatializer_height},
+    {expand_widener, widener_slider(0), widener_expand_y, widener_height},
 };
 
 Section section_for(Control header) {
@@ -99,14 +109,14 @@ constexpr Row page_rows[] = {
     {spatializer, L"Spatializer", spatializer_y + 14, 32, toggle_width},
     {expand_spatializer, L"Expand Settings", spatializer_expand_y, expand_height, 0, Type::expand},
     {widener, L"Stereo Widener", widener_y + 14, 32, toggle_width},
-    {expand_widener, L"Expand Settings", widener_y + 57, 48, 0, Type::expand},
+    {expand_widener, L"Expand Settings", widener_expand_y, expand_height, 0, Type::expand},
     {pitch_slider, L"Adjust Pitch", pitch_y + 49, 31, 0, Type::slider},
 };
 constexpr const wchar_t *gain_labels[gain_count] = {
     L"Preamp", L"60 Hz", L"170 Hz", L"310 Hz", L"600 Hz", L"1 kHz", L"3 kHz", L"6 kHz", L"12 kHz", L"14 kHz", L"16 kHz"
 };
 constexpr auto rows = [] {
-    std::array<Row, std::size(page_rows) + 2 * gain_count + compressor_count + spatializer_count> result{};
+    std::array<Row, std::size(page_rows) + 2 * gain_count + compressor_count + spatializer_count + widener_count> result{};
     auto row = result.begin();
     for (const auto &entry : page_rows) {
         *row++ = entry;
@@ -127,6 +137,12 @@ constexpr auto rows = [] {
             for (int i = 0; i < spatializer_count; ++i) {
                 const int y = spatializer_expand_y + detail_start + i * detail_spacing;
                 *row++ = {spatializer_slider(i), spatializer_parameters[i].label, y, 30, 0, Type::slider, Section::spatializer};
+            }
+        }
+        if (entry.id == expand_widener) {
+            for (int i = 0; i < widener_count; ++i) {
+                const int y = widener_expand_y + detail_start + i * detail_spacing;
+                *row++ = {widener_slider(i), widener_parameters[i].label, y, 30, 0, Type::slider, Section::widener};
             }
         }
     }
@@ -371,6 +387,7 @@ private:
     HWND window_ = nullptr;
     HFONT regular_ = nullptr, section_ = nullptr, small_ = nullptr;
     bool window_owned_ = false, slider_dirty_ = false;
+    bool widener_reload_pending_ = false;
     std::array<bool, std::size(sections)> expanded_{};
     const wchar_t *defaults_notice_ = nullptr;
     std::optional<Control> edited_;
@@ -426,13 +443,17 @@ private:
                     const auto &parameter = spatializer_parameters[spatializer_index(row.id)];
                     minimum = spatializer_position(parameter.minimum);
                     maximum = spatializer_position(parameter.maximum);
+                } else if (row.section == Section::widener) {
+                    const auto &parameter = widener_parameters[widener_index(row.id)];
+                    minimum = widener_position(parameter, parameter.minimum);
+                    maximum = widener_position(parameter, parameter.maximum);
                 }
                 const int step = row.id == delay_slider ? 50 : 1;
                 SendMessageW(child, TBM_SETRANGEMIN, FALSE, minimum);
                 SendMessageW(child, TBM_SETRANGEMAX, FALSE, maximum);
                 SendMessageW(child, TBM_SETTHUMBLENGTH, 27, 0);
                 SendMessageW(child, TBM_SETLINESIZE, 0, step);
-                SendMessageW(child, TBM_SETPAGESIZE, 0, std::min(step * 10, (maximum - minimum) / 10));
+                SendMessageW(child, TBM_SETPAGESIZE, 0, std::clamp((maximum - minimum) / 10, 1, step * 10));
             }
         }
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
@@ -474,7 +495,7 @@ private:
 
     RECT box(const Row &row, LONG width) const {
         const bool detail = row.section != Section::page;
-        const int channel_inset = row.section == Section::spatializer ? 9 : 7;
+        const int channel_inset = row.section == Section::spatializer || row.section == Section::widener ? 9 : 7;
         const int outer = inset + (detail ? detail_inset : 0) - (row.type == Type::slider ? channel_inset : 0);
         // Detail rows use their header as the anchor for shifts from earlier sections.
         const int anchor = detail ? sections[static_cast<std::size_t>(row.section)].y : row.y;
@@ -578,15 +599,21 @@ private:
             if (!show_row(row))
                 continue;
             const auto field = box(row, area.right);
-            if (row.section == Section::compressor || row.section == Section::spatializer) {
+            if (row.section == Section::compressor || row.section == Section::spatializer || row.section == Section::widener) {
                 const RECT labels{inset + detail_inset, field.top - 33, right - detail_inset, field.top - 7};
                 std::wstring value;
                 if (row.section == Section::compressor) {
                     const int index = compressor_index(row.id);
                     value = number_text(settings_.compressor_values[index], 1, compressor_parameters[index].suffix, true);
-                } else {
+                } else if (row.section == Section::spatializer) {
                     const int index = spatializer_index(row.id);
                     value = number_text(spatializer_position(settings_.spatializer_values[index]), 1, L"", true);
+                } else {
+                    const int index = widener_index(row.id);
+                    const auto &parameter = widener_parameters[index];
+                    const double number = widener_position(parameter, settings_.widener_values[index]) /
+                                          double(parameter.steps_per_unit);
+                    value = number_text(number, 1, parameter.suffix, true);
                 }
                 text(dc, row.caption, labels, regular_, colors_.dim);
                 text(dc, value.c_str(), labels, regular_, colors_.dim, DT_RIGHT);
@@ -765,6 +792,12 @@ private:
             if (old.spatializer_values != settings_.spatializer_values)
                 InvalidateRect(window_, nullptr, FALSE);
         }
+        if (is_expanded(Section::widener)) {
+            for (int i = 0; i < widener_count; ++i)
+                set_slider_position(widener_slider(i), widener_position(widener_parameters[i], settings_.widener_values[i]));
+            if (old.widener_values != settings_.widener_values)
+                InvalidateRect(window_, nullptr, FALSE);
+        }
         const double seconds = settings_.delay.value_or(0);
         set_unfocused_text(control(delay), number_text(seconds, 3, L" s", true));
         const int delay_position = std::lround(std::clamp(seconds, -10.0, 10.0) * 1000);
@@ -934,7 +967,8 @@ private:
         }
         case expand_equalizer:
         case expand_compressor:
-        case expand_spatializer: toggle_section(section_for(id)); return false;
+        case expand_spatializer:
+        case expand_widener: toggle_section(section_for(id)); return false;
         case two_pass: set_two_pass(player_, !settings_.two_pass); return true;
         case compressor: set_filter(player_, Filter::compressor, !settings_.compressor); return true;
         case spatializer: set_filter(player_, Filter::spatializer, !settings_.spatializer); return true;
@@ -982,6 +1016,8 @@ private:
     }
 
     void save_slider_settings() {
+        if (std::exchange(widener_reload_pending_, false))
+            reload_widener(player_);
         if (std::exchange(slider_dirty_, false))
             vlc_config::save(player_.vlc);
     }
@@ -1023,6 +1059,7 @@ private:
             const bool gain = is_expanded(Section::equalizer) && is_gain(id) && id == gain_slider(gain_index(id));
             const bool compressor = is_expanded(Section::compressor) && is_compressor_slider(id);
             const bool spatializer_setting = is_expanded(Section::spatializer) && is_spatializer_slider(id);
+            const bool widener_setting = is_expanded(Section::widener) && is_widener_slider(id);
             if (id == delay_slider && IsWindowEnabled(slider))
                 set_delay(player_, position / 1000.0);
             if (id == pitch_slider) {
@@ -1049,7 +1086,16 @@ private:
                     slider_dirty_ = true;
                 }
             }
-            if ((gain || compressor || spatializer_setting || id == pitch_slider) && LOWORD(wp) != TB_THUMBTRACK)
+            if (widener_setting) {
+                const int index = widener_index(id);
+                const auto &parameter = widener_parameters[index];
+                if (position != widener_position(parameter, settings_.widener_values[index])) {
+                    set_filter_value(player_, parameter, position / float(parameter.steps_per_unit));
+                    widener_reload_pending_ |= parameter.reload;
+                    slider_dirty_ = true;
+                }
+            }
+            if ((gain || compressor || spatializer_setting || widener_setting || id == pitch_slider) && LOWORD(wp) != TB_THUMBTRACK)
                 save_slider_settings();
             refresh();
             return 0;
@@ -1064,17 +1110,26 @@ private:
         }
         case WM_NOTIFY: {
             const auto note = reinterpret_cast<NMHDR *>(lp);
+            const int id = static_cast<int>(note->idFrom);
+            if (note->code == NM_RELEASEDCAPTURE && is_widener_slider(id)) {
+                save_slider_settings();
+                return 0;
+            }
             if (note->code == NM_CUSTOMDRAW) {
-                const int id = static_cast<int>(note->idFrom);
                 auto &drawing = *reinterpret_cast<NMCUSTOMDRAW *>(lp);
-                const bool spatializer_ticks = is_spatializer_slider(id), dark_theme = &colors_ == &dark;
-                if (is_gain(id) || is_compressor_slider(id) || spatializer_ticks) {
-                    SliderTicks ticks;
-                    if (spatializer_ticks) {
+                const bool spatializer_slider = is_spatializer_slider(id), widener_slider = is_widener_slider(id);
+                const bool dark_theme = &colors_ == &dark;
+                if (is_gain(id) || is_compressor_slider(id) || spatializer_slider || widener_slider) {
+                    int divisions = 0;
+                    if (spatializer_slider) {
                         const auto &parameter = spatializer_parameters[spatializer_index(id)];
-                        ticks = {spatializer_position(parameter.maximum), dark_theme ? RGB(37, 32, 26) : colors_.edge,
-                                 dark_theme ? RGB(76, 52, 22) : RGB(172, 144, 115)};
+                        divisions = spatializer_position(parameter.maximum);
+                    } else if (widener_slider && id != first_widener_slider) {
+                        const auto &parameter = widener_parameters[widener_index(id)];
+                        divisions = widener_position(parameter, parameter.maximum);
                     }
+                    const SliderTicks ticks{divisions, dark_theme ? RGB(37, 32, 26) : colors_.edge,
+                                            dark_theme ? RGB(76, 52, 22) : RGB(172, 144, 115)};
                     return draw_slider(drawing, detail_colors_, false, dark_theme ? RGB(171, 99, 20) : colors_.accent, ticks);
                 }
                 return draw_slider(drawing, colors_, true);
