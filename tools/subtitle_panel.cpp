@@ -28,6 +28,7 @@
 #include "player_window.hpp"
 #include "preferences_sidebar.hpp"
 #include "subtitle_drop.hpp"
+#include "video_preferences.hpp"
 #include "vlc_input.hpp"
 #include "track_defaults.hpp"
 
@@ -2181,6 +2182,14 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
         set(data, module, capability, "demux_filter") || set(data, module, score, 0) ||
         set(data, module, open_callback, "open_speed_filter", reinterpret_cast<void *>(subtitle_preferences::open_speed_filter)) ||
         set(data, module, close_callback, "close_speed_filter", reinterpret_cast<void *>(subtitle_preferences::close_speed_filter)))
+        return -1;
+    const char *const video_shortcuts[] = {video_preferences::software_video_filter};
+    if (set(data, nullptr, create_module, &module) ||
+        set(data, module, shortcut, std::size(video_shortcuts), video_shortcuts) ||
+        set(data, module, description, "VLC Redesign software video format") ||
+        set(data, module, capability, "video filter") || set(data, module, score, 0) ||
+        set(data, module, open_callback, "open_software_video_filter",
+            reinterpret_cast<void *>(video_preferences::open_software_video_filter)))
         return -1;
     return 0;
 }

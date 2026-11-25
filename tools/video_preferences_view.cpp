@@ -5,6 +5,7 @@
 #include "preferences_widgets.hpp"
 #include "video_preferences.hpp"
 #include "video_renderers.hpp"
+#include "vlc_config.hpp"
 
 #include <utility>
 
@@ -24,20 +25,31 @@ constexpr int filter_stride = 125, filter_height = 48;
 constexpr int preset_divider = first_filter_top + (filter_count - 1) * filter_stride + filter_height + 12;
 constexpr int preset_top = preset_divider + 21, preset_height = 42;
 constexpr int content_height = preset_top + preset_height + 13;
-constexpr UINT_PTR render_refresh = 1;
+constexpr int essential_inset = 16, slider_height = 30, slider_start = 87, slider_spacing = 76;
+constexpr int slider_count = std::size(essential_sliders);
+constexpr int essential_height = slider_start + (slider_count - 1) * slider_spacing + 47;
+constexpr UINT_PTR render_refresh = 1, essential_preview = 2;
 
 enum Control {
     no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
-    first_filter, default_preset = first_filter + filter_count
+    first_filter, default_preset = first_filter + filter_count, first_essential_slider
 };
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
 constexpr Field field(Control id) { return static_cast<Field>(id - zoom); }
 static_assert(field(crop) == Field::crop);
 
+constexpr bool is_essential_slider(int id) {
+    return id >= first_essential_slider && id < first_essential_slider + slider_count;
+}
+
 class View {
 public:
-    View(VlcPlayer player, bool light_theme) : player_(player), colors_(light_theme ? light : dark) {}
+    View(VlcPlayer player, bool light_theme) : player_(player), colors_(light_theme ? light : dark), detail_colors_(colors_) {
+        detail_colors_.panel = colors_.button;
+        if (!light_theme)
+            detail_colors_.track = RGB(9, 9, 9);
+    }
 
     ~View() {
         DeleteObject(regular_);
@@ -75,6 +87,7 @@ public:
         if (show) {
             refresh();
         } else {
+            save_essential();
             close_dropdown(false);
             if (IsChild(window_, GetFocus()) || GetFocus() == window_)
                 SetFocus(GetParent(window_));
@@ -112,7 +125,8 @@ public:
                 SetFocus(window_);
                 return true;
             }
-        } else if (message.wParam == VK_RETURN && message.hwnd != window_) {
+        } else if (message.wParam == VK_RETURN && !is_essential_slider(GetDlgCtrlID(message.hwnd)) &&
+                   message.hwnd != window_) {
             SendMessageW(message.hwnd, BM_CLICK, 0, 0);
             return true;
         }
@@ -123,6 +137,7 @@ private:
     HWND window_ = nullptr;
     VlcPlayer player_;
     const Colors &colors_;
+    Colors detail_colors_;
     HFONT regular_ = nullptr, heading_ = nullptr;
     Scroll scroll_{content_height};
     Transform transform_;
@@ -130,6 +145,9 @@ private:
     std::vector<video_renderers::Output> outputs_;
     std::optional<Control> dropdown_;
     std::wstring original_angle_;
+    EssentialPositions essential_{};
+    std::optional<int> pending_slider_;
+    bool essential_expanded_ = false, essential_dirty_ = false;
     bool window_owned_ = false, save_failed_ = false;
     int option_wheel_ = 0;
 
@@ -142,18 +160,20 @@ private:
     }
 
     bool initialize() {
+        INITCOMMONCONTROLSEX common{sizeof(common), ICC_BAR_CLASSES};
+        InitCommonControlsEx(&common);
         regular_ = make_font(15);
         heading_ = make_font(18, FW_SEMIBOLD);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
         for (int id = no_flip; id <= default_preset; ++id) {
             const bool edit = id == rotate, list = id == options_list;
-            const bool pending = id >= first_filter;
+            const bool pending = id > first_filter;
             const DWORD style = edit ? ES_AUTOHSCROLL : list ?
                 LBS_HASSTRINGS | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT : BS_OWNERDRAW;
             const wchar_t *label = L"";
             if (id <= vertical)
                 label = flip_names[id - no_flip];
-            else if (pending)
+            else if (id >= first_filter)
                 label = id == default_preset ? L"Default Preset" : L"Expand Settings";
             const DWORD visibility = list ? 0 : WS_VISIBLE | (pending ? WS_DISABLED : WS_TABSTOP);
             const auto child = CreateWindowExW(0, edit ? L"EDIT" : list ? L"LISTBOX" : L"BUTTON", label,
@@ -163,11 +183,37 @@ private:
             if (!child)
                 return false;
             SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
+            if (id == first_filter && !create_essential_sliders(module))
+                return false;
         }
         SendMessageW(control(rotate), EM_SETLIMITTEXT, 24, 0);
         SendMessageW(control(options_list), LB_SETITEMHEIGHT, 0, option_height);
         refresh();
         return true;
+    }
+
+    bool create_essential_sliders(HINSTANCE module) {
+        for (int i = 0; i < slider_count; ++i) {
+            const auto &slider = essential_sliders[i];
+            const HWND child = CreateWindowExW(0, TRACKBAR_CLASSW, slider.label,
+                                               WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | TBS_NOTICKS | TBS_FIXEDLENGTH |
+                                                   TBS_TRANSPARENTBKGND,
+                                               0, 0, 0, 0, window_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(first_essential_slider + i)),
+                                               module, nullptr);
+            if (!child)
+                return false;
+            SendMessageW(child, TBM_SETRANGEMIN, FALSE, slider.minimum);
+            SendMessageW(child, TBM_SETRANGEMAX, FALSE, slider.maximum);
+            SendMessageW(child, TBM_SETTHUMBLENGTH, 27, 0);
+            SendMessageW(child, TBM_SETLINESIZE, 0, 1);
+            SendMessageW(child, TBM_SETPAGESIZE, 0, (slider.maximum - slider.minimum) / 10);
+        }
+        return true;
+    }
+
+    int essential_extra_height() const {
+        return essential_expanded_ ? essential_height - filter_height : 0;
     }
 
     RECT box(Control id, LONG width) const {
@@ -181,10 +227,17 @@ private:
         }
         if (id == rotate)
             return {right - rotate_width, y + rotate_top, right, y + rotate_top + rotate_height};
+        if (is_essential_slider(id)) {
+            const int top = y + first_filter_top + slider_start + (id - first_essential_slider) * slider_spacing;
+            const int slider_inset = inset + essential_inset - 7;
+            return {slider_inset, top, width - slider_inset, top + slider_height};
+        }
         if (id == default_preset)
-            return {inset, y + preset_top, right, y + preset_top + preset_height};
+            return {inset, y + preset_top + essential_extra_height(), right,
+                    y + preset_top + essential_extra_height() + preset_height};
         if (id >= first_filter) {
-            const int top = y + first_filter_top + (id - first_filter) * filter_stride;
+            const int top = y + first_filter_top + (id - first_filter) * filter_stride +
+                            (id == first_filter ? 0 : essential_extra_height());
             return {inset, top, right, top + filter_height};
         }
         const int top = y + dropdown_top + (id - zoom) * row_stride;
@@ -193,7 +246,8 @@ private:
 
     void layout() {
         const auto width = bounds().right;
-        for (int id = no_flip; id <= default_preset; ++id) {
+        const int end = essential_expanded_ ? first_essential_slider + slider_count : default_preset + 1;
+        for (int id = no_flip; id < end; ++id) {
             if (id == options_list)
                 continue;
             auto area = box(static_cast<Control>(id), width);
@@ -228,7 +282,73 @@ private:
             SetWindowTextW(control(id), choice ? choices(key).begin()[*choice].label : L"Custom");
         }
         SetWindowTextW(control(render), wstring(video_renderers::selected(player_).name).c_str());
+        if (essential_expanded_)
+            refresh_essential();
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+    }
+
+    void refresh_essential() {
+        if (pending_slider_)
+            return;
+        essential_ = essential_positions(player_);
+        for (int i = 0; i < slider_count; ++i)
+            SendMessageW(control(first_essential_slider + i), TBM_SETPOS, TRUE, essential_[i]);
+    }
+
+    void toggle_essential() {
+        close_dropdown(false);
+        if (essential_expanded_) {
+            save_essential();
+            if (is_essential_slider(GetDlgCtrlID(GetFocus())))
+                SetFocus(control(first_filter));
+        }
+        essential_expanded_ = !essential_expanded_;
+        SetWindowTextW(control(first_filter), essential_expanded_ ? L"Collapse Settings" : L"Expand Settings");
+        scroll_.set_content_height(content_height + essential_extra_height());
+        scroll_.move(scroll_.offset(), bounds());
+        layout();
+        if (essential_expanded_)
+            refresh_essential();
+        for (int i = 0; i < slider_count; ++i)
+            ShowWindow(control(first_essential_slider + i), essential_expanded_ ? SW_SHOWNOACTIVATE : SW_HIDE);
+        if (essential_expanded_)
+            show_control(control(first_essential_slider));
+    }
+
+    void apply_essential() {
+        KillTimer(window_, essential_preview);
+        const auto index = std::exchange(pending_slider_, std::nullopt);
+        if (!index)
+            return;
+        const int position = SendMessageW(control(first_essential_slider + *index), TBM_GETPOS, 0, 0);
+        if (position != essential_[*index]) {
+            set_essential_position(player_, essential_sliders[*index], position);
+            essential_[*index] = position;
+            essential_dirty_ = true;
+        }
+    }
+
+    void save_essential() {
+        apply_essential();
+        if (std::exchange(essential_dirty_, false)) {
+            save_failed_ = !vlc_config::save(player_.vlc);
+            InvalidateRect(window_, nullptr, FALSE);
+        }
+    }
+
+    void move_essential_slider(int id, WORD event) {
+        const int index = id - first_essential_slider;
+        if (pending_slider_ && *pending_slider_ != index)
+            apply_essential();
+        if (event == TB_THUMBTRACK) {
+            // Coalesce drag events because VLC rebuilds the video filter chain when its options change.
+            if (!pending_slider_)
+                SetTimer(window_, essential_preview, 80, nullptr);
+            pending_slider_ = index;
+        } else {
+            pending_slider_ = index;
+            save_essential();
+        }
     }
 
     void draw(HDC dc) const {
@@ -256,9 +376,18 @@ private:
             const auto button = box(static_cast<Control>(first_filter + i), area.right);
             text(dc, filter_names[i], {label_inset, button.top - 46, right, button.top - 9}, regular_, colors_.dim);
             if (i + 1 < filter_count)
-                divider(button.bottom + 19);
+                divider(button.bottom + 19 + (i == 0 ? essential_extra_height() : 0));
         }
-        divider(top + preset_divider);
+        if (essential_expanded_) {
+            const auto header = box(first_filter, area.right);
+            round_rect(dc, {header.left, header.top, header.right, header.top + essential_height}, 6, detail_colors_.panel);
+            for (int i = 0; i < slider_count; ++i) {
+                const auto slider = box(static_cast<Control>(first_essential_slider + i), area.right);
+                text(dc, essential_sliders[i].label, {header.left + essential_inset, slider.top - 33,
+                     header.right - essential_inset, slider.top - 7}, regular_, colors_.dim);
+            }
+        }
+        divider(top + preset_divider + essential_extra_height());
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
     }
@@ -285,12 +414,16 @@ private:
         const bool selected_flip = flip && static_cast<int>(transform_.flip) == static_cast<int>(item.CtlID) - no_flip;
         const auto label = window_text(item.hwndItem);
         fill(dc, box, colors_.panel);
-        round_rect(dc, box, 6, colors_.track);
+        const bool expanded = item.CtlID == first_filter && essential_expanded_;
+        round_rect(dc, box, 6, expanded ? detail_colors_.panel : colors_.track);
+        if (expanded)
+            fill(dc, {box.left, box.top + 6, box.right, box.bottom}, detail_colors_.panel);
         if (item.CtlID >= first_filter) {
             const bool preset = item.CtlID == default_preset;
             const auto color = preset ? colors_.text : colors_.dim;
             const int arrow_inset = preset ? 28 : 23;
-            arrow(dc, box.right - arrow_inset, (box.top + box.bottom) / 2, preset ? Arrow::up : Arrow::right, color);
+            const auto direction = preset ? Arrow::up : expanded ? Arrow::down : Arrow::right;
+            arrow(dc, box.right - arrow_inset, (box.top + box.bottom) / 2, direction, color);
             text(dc, label.c_str(), {box.left + 16, box.top, box.right - 38, box.bottom}, regular_, color);
             return;
         }
@@ -461,6 +594,8 @@ private:
             }
         } else if (event == BN_CLICKED && id >= zoom && id <= render) {
             open_dropdown(id);
+        } else if (event == BN_CLICKED && id == first_filter) {
+            toggle_essential();
         }
     }
 
@@ -476,7 +611,9 @@ private:
         case WM_PAINT: paint(window_, bounds(), [this](HDC dc) { draw(dc); }); return 0;
         case WM_PRINTCLIENT: draw(reinterpret_cast<HDC>(wp)); return 0;
         case WM_TIMER:
-            if (dropdown_ == render && GetCapture() != control(options_list))
+            if (wp == essential_preview)
+                apply_essential();
+            else if (wp == render_refresh && dropdown_ == render && GetCapture() != control(options_list))
                 update_renderers(false);
             return 0;
         case WM_MOUSEWHEEL: wheel(GET_WHEEL_DELTA_WPARAM(wp)); return 0;
@@ -493,6 +630,29 @@ private:
         case WM_CAPTURECHANGED: scroll_.capture_lost(); return 0;
         case WM_COMMAND: command(static_cast<Control>(LOWORD(wp)), HIWORD(wp)); return 0;
         case WM_DRAWITEM: draw_item(*reinterpret_cast<const DRAWITEMSTRUCT *>(lp)); return TRUE;
+        case WM_HSCROLL: {
+            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
+            if (is_essential_slider(id))
+                move_essential_slider(id, LOWORD(wp));
+            return 0;
+        }
+        case WM_NOTIFY: {
+            const auto note = reinterpret_cast<NMHDR *>(lp);
+            const int id = static_cast<int>(note->idFrom);
+            if (is_essential_slider(id)) {
+                if (note->code == NM_RELEASEDCAPTURE) {
+                    save_essential();
+                } else if (note->code == NM_CUSTOMDRAW) {
+                    const bool dark_theme = &colors_ == &dark;
+                    const SliderTicks ticks{essential_sliders[id - first_essential_slider].divisions,
+                                            dark_theme ? RGB(37, 32, 26) : colors_.edge,
+                                            dark_theme ? RGB(76, 52, 22) : RGB(172, 144, 115)};
+                    return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), detail_colors_, false,
+                                       dark_theme ? RGB(171, 99, 20) : colors_.accent, ticks);
+                }
+            }
+            break;
+        }
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLOREDIT: {
             const auto dc = reinterpret_cast<HDC>(wp);
@@ -502,7 +662,7 @@ private:
             SetDCBrushColor(dc, background);
             return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
         }
-        case WM_DESTROY: KillTimer(window_, render_refresh); break;
+        case WM_DESTROY: save_essential(); KillTimer(window_, render_refresh); break;
         default: break;
         }
         return DefWindowProcW(window_, message, wp, lp);

@@ -42,9 +42,8 @@ struct FilterChain {
     std::string before, selected, after;
 };
 
-template<class Match>
-FilterChain split_filters(std::string_view chain, Match matches) {
-    FilterChain result;
+template<class Visit>
+void for_each_filter(std::string_view chain, Visit visit) {
     std::size_t start = 0;
     int braces = 0;
     char quote = '\0';
@@ -55,10 +54,7 @@ FilterChain split_filters(std::string_view chain, Match matches) {
             const auto first = filter.find_first_not_of(" \t");
             if (first != std::string_view::npos) {
                 const auto name = filter.substr(first, filter.find_first_of("{ \t", first) - first);
-                if (matches(name, filter))
-                    append_filter(result.selected, filter);
-                else
-                    append_filter(result.selected.empty() ? result.before : result.after, filter);
+                visit(name, filter);
             }
             start = i + 1;
         } else if (quote) {
@@ -74,6 +70,17 @@ FilterChain split_filters(std::string_view chain, Match matches) {
             --braces;
         }
     }
+}
+
+template<class Match>
+FilterChain split_filters(std::string_view chain, Match matches) {
+    FilterChain result;
+    for_each_filter(chain, [&](auto name, auto filter) {
+        if (matches(name, filter))
+            append_filter(result.selected, filter);
+        else
+            append_filter(result.selected.empty() ? result.before : result.after, filter);
+    });
     return result;
 }
 
