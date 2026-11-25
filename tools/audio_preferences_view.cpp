@@ -262,7 +262,8 @@ public:
             return nullptr;
 
         auto view = std::make_unique<View>(player, light_theme);
-        const HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, class_name, L"Audio Preferences",
+        // Present the native controls together when a menu opens or the page is shown.
+        const HWND window = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, class_name, L"Audio Preferences",
                                             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                                             bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
                                             parent, nullptr, module, view.get());
@@ -321,18 +322,14 @@ public:
                 RECT menu{};
                 GetWindowRect(list, &menu);
                 const POINT pointer{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+                bool over_menu = message.hwnd == list || PtInRect(&menu, pointer);
                 if (id == equalizer) {
                     RECT header{};
                     GetWindowRect(control(id), &header);
-                    if (message.hwnd == list || PtInRect(&menu, pointer) || PtInRect(&header, pointer)) {
-                        scroll_presets(GET_WHEEL_DELTA_WPARAM(message.wParam));
-                        return true;
-                    }
+                    over_menu |= PtInRect(&header, pointer) != FALSE;
                 }
-                if (message.hwnd == list)
-                    return false;
-                if (PtInRect(&menu, pointer)) {
-                    SendMessageW(list, message.message, message.wParam, message.lParam);
+                if (over_menu) {
+                    scroll_choices(id, GET_WHEEL_DELTA_WPARAM(message.wParam));
                     return true;
                 }
                 close_choices(true);
@@ -392,7 +389,7 @@ private:
     const wchar_t *defaults_notice_ = nullptr;
     std::optional<Control> edited_;
     std::optional<Control> dropdown_;
-    int preset_wheel_ = 0;
+    int choice_wheel_ = 0;
     std::wstring original_;
 
     HWND control(Control id) const { return GetDlgItem(window_, id); }
@@ -458,9 +455,8 @@ private:
         }
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
         for (const auto id : {choices, preset_choices}) {
-            const DWORD scrollbar = id == choices ? WS_VSCROLL : 0;
             const auto list = CreateWindowExW(0, L"LISTBOX", nullptr,
-                                             WS_CHILD | WS_CLIPSIBLINGS | scrollbar | LBS_NOINTEGRALHEIGHT |
+                                             WS_CHILD | WS_CLIPSIBLINGS | LBS_NOINTEGRALHEIGHT |
                                                  LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
                                              0, 0, 0, 0, window_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), module, nullptr);
@@ -518,7 +514,7 @@ private:
             SetWindowPos(control(row.id), nullptr, area.left, area.top, area.right - area.left, area.bottom - area.top,
                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
         }
-        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
     void wheel(int delta) {
@@ -899,6 +895,7 @@ private:
                 SendMessageW(list, LB_SETITEMDATA, index, i);
         }
         dropdown_ = id;
+        choice_wheel_ = 0;
         const int width = box.right - box.left;
         if (equalizer_list) {
             // The button stays above the scrolling choices and supplies the rounded top of the menu.
@@ -906,7 +903,6 @@ private:
                                                   2 * dropdown_radius, 2 * dropdown_radius);
             if (shape && !SetWindowRgn(list, shape, FALSE))
                 DeleteObject(shape);
-            preset_wheel_ = 0;
             InvalidateRect(field, nullptr, FALSE);
         }
         SetWindowPos(list, HWND_TOP, box.left, top, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
@@ -914,16 +910,23 @@ private:
         SetFocus(list);
     }
 
-    void scroll_presets(int delta) {
-        const auto list = control(preset_choices);
+    void scroll_choices(Control id, int delta) {
+        const auto list = choice_list(id);
         RECT area{};
         GetClientRect(list, &area);
         const int count = SendMessageW(list, LB_GETCOUNT, 0, 0);
         const int current = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
-        const int visible = std::max(1L, area.bottom / preset_height);
-        preset_wheel_ += delta;
-        const int position = std::clamp(current - 2 * (preset_wheel_ / WHEEL_DELTA), 0, std::max(0, count - visible));
-        preset_wheel_ %= WHEEL_DELTA;
+        const int row_height = id == equalizer ? preset_height : option_height;
+        const int visible = std::max(1L, area.bottom / row_height);
+        int step = 2;
+        if (id == stereo_mode) {
+            UINT lines = 3;
+            SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+            step = lines == WHEEL_PAGESCROLL ? visible : static_cast<int>(std::min<UINT>(lines, std::size(stereo_modes)));
+        }
+        choice_wheel_ += delta;
+        const int position = std::clamp(current - step * (choice_wheel_ / WHEEL_DELTA), 0, std::max(0, count - visible));
+        choice_wheel_ %= WHEEL_DELTA;
         if (position != current)
             SendMessageW(list, LB_SETTOPINDEX, position, 0);
     }

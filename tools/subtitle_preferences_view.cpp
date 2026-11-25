@@ -103,7 +103,8 @@ public:
             return nullptr;
 
         auto view = std::make_unique<View>(video_owner, player, light_theme);
-        HWND window = CreateWindowExW(WS_EX_CONTROLPARENT, class_name, L"Subtitle Preferences",
+        // Present the native controls together when switching to this page.
+        HWND window = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, class_name, L"Subtitle Preferences",
                                       WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                                       bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
                                       parent, nullptr, module, view.get());
@@ -267,7 +268,7 @@ private:
             place(slider.id, {inset - 7, slider.y - scroll_.offset(), area.right - inset + 7, slider.y - scroll_.offset() + slider_height});
         // During a scroll, a child can move through another control's old
         // position. Repaint the viewport and controls after all moves finish.
-        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
     void on_wheel(int delta) {
