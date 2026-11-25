@@ -675,7 +675,7 @@ private:
             text(dc, label.c_str(), {area.left + 16, area.top, area.right - 38, area.bottom},
                  regular_, dropdown ? colors_.text : colors_.dim);
         }
-        arrow(dc, area.right - 23, (area.top + area.bottom) / 2, dropdown || expanded,
+        arrow(dc, area.right - 23, (area.top + area.bottom) / 2, dropdown || expanded ? Arrow::down : Arrow::right,
               dropdown ? colors_.text : colors_.dim);
     }
 

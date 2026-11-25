@@ -110,13 +110,17 @@ inline void text(HDC dc, const wchar_t *label, RECT box, HFONT font, COLORREF co
     SelectObject(dc, previous);
 }
 
-inline void arrow(HDC dc, int x, int y, bool down, COLORREF color) {
+enum class Arrow { right, down, up };
+
+inline void arrow(HDC dc, int x, int y, Arrow direction, COLORREF color) {
     const auto pen = CreatePen(PS_SOLID, 1, color);
     const auto old = SelectObject(dc, pen);
+    const bool right = direction == Arrow::right;
+    const int vertical = direction == Arrow::up ? -1 : 1;
     const POINT points[] = {
-        down ? POINT{x - 5, y - 2} : POINT{x - 2, y - 5},
-        down ? POINT{x, y + 3} : POINT{x + 3, y},
-        down ? POINT{x + 5, y - 2} : POINT{x - 2, y + 5},
+        right ? POINT{x - 2, y - 5} : POINT{x - 5, y - 2 * vertical},
+        right ? POINT{x + 3, y} : POINT{x, y + 3 * vertical},
+        right ? POINT{x - 2, y + 5} : POINT{x + 5, y - 2 * vertical},
     };
     Polyline(dc, points, std::size(points));
     SelectObject(dc, old);

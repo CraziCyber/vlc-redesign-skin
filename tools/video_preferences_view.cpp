@@ -17,11 +17,18 @@ constexpr wchar_t class_name[] = L"VlcRedesignVideoPreferences";
 constexpr int inset = 20, label_inset = 24, rotate_width = 142, dropdown_width = 220;
 constexpr int flip_top = 103, flip_height = 44, rotate_top = 173, rotate_height = 36;
 constexpr int dropdown_top = 235, dropdown_height = 48, row_stride = 68, option_height = 33;
-constexpr int content_height = 645;
+constexpr const wchar_t *filter_names[] = {L"Essential", L"Crop", L"Colors", L"Geometry", L"Overlay", L"Advanced"};
+constexpr int filter_count = std::size(filter_names);
+constexpr int filters_top = 645, first_filter_top = filters_top + 81;
+constexpr int filter_stride = 125, filter_height = 48;
+constexpr int preset_divider = first_filter_top + (filter_count - 1) * filter_stride + filter_height + 12;
+constexpr int preset_top = preset_divider + 21, preset_height = 42;
+constexpr int content_height = preset_top + preset_height + 13;
 constexpr UINT_PTR render_refresh = 1;
 
 enum Control {
-    no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list
+    no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
+    first_filter, default_preset = first_filter + filter_count
 };
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
@@ -138,13 +145,19 @@ private:
         regular_ = make_font(15);
         heading_ = make_font(18, FW_SEMIBOLD);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
-        for (int id = no_flip; id <= options_list; ++id) {
+        for (int id = no_flip; id <= default_preset; ++id) {
             const bool edit = id == rotate, list = id == options_list;
+            const bool pending = id >= first_filter;
             const DWORD style = edit ? ES_AUTOHSCROLL : list ?
                 LBS_HASSTRINGS | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT : BS_OWNERDRAW;
-            const wchar_t *label = id <= vertical ? flip_names[id - no_flip] : L"";
+            const wchar_t *label = L"";
+            if (id <= vertical)
+                label = flip_names[id - no_flip];
+            else if (pending)
+                label = id == default_preset ? L"Default Preset" : L"Expand Settings";
+            const DWORD visibility = list ? 0 : WS_VISIBLE | (pending ? WS_DISABLED : WS_TABSTOP);
             const auto child = CreateWindowExW(0, edit ? L"EDIT" : list ? L"LISTBOX" : L"BUTTON", label,
-                                               WS_CHILD | WS_CLIPSIBLINGS | (list ? 0 : WS_VISIBLE | WS_TABSTOP) | style,
+                                               WS_CHILD | WS_CLIPSIBLINGS | visibility | style,
                                                0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                                module, nullptr);
             if (!child)
@@ -168,13 +181,21 @@ private:
         }
         if (id == rotate)
             return {right - rotate_width, y + rotate_top, right, y + rotate_top + rotate_height};
+        if (id == default_preset)
+            return {inset, y + preset_top, right, y + preset_top + preset_height};
+        if (id >= first_filter) {
+            const int top = y + first_filter_top + (id - first_filter) * filter_stride;
+            return {inset, top, right, top + filter_height};
+        }
         const int top = y + dropdown_top + (id - zoom) * row_stride;
         return {right - dropdown_width, top, right, top + dropdown_height};
     }
 
     void layout() {
         const auto width = bounds().right;
-        for (int id = no_flip; id <= render; ++id) {
+        for (int id = no_flip; id <= default_preset; ++id) {
+            if (id == options_list)
+                continue;
             auto area = box(static_cast<Control>(id), width);
             if (id == rotate) {
                 area.left += 13;
@@ -228,7 +249,16 @@ private:
         if (save_failed_)
             text(dc, L"VLC could not save this setting.", {label_inset, top + 624, right, top + 644},
                  regular_, colors_.text);
-        fill(dc, {0, top + content_height - 1, area.right, top + content_height}, colors_.edge);
+        const auto divider = [&](LONG y) { fill(dc, {0, y, area.right, y + 1}, colors_.edge); };
+        divider(top + filters_top - 1);
+        text(dc, L"Filters", {label_inset, top + filters_top, right, top + filters_top + 32}, heading_, colors_.text);
+        for (int i = 0; i < filter_count; ++i) {
+            const auto button = box(static_cast<Control>(first_filter + i), area.right);
+            text(dc, filter_names[i], {label_inset, button.top - 46, right, button.top - 9}, regular_, colors_.dim);
+            if (i + 1 < filter_count)
+                divider(button.bottom + 19);
+        }
+        divider(top + preset_divider);
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
     }
@@ -253,15 +283,23 @@ private:
         }
         const bool flip = item.CtlID <= vertical;
         const bool selected_flip = flip && static_cast<int>(transform_.flip) == static_cast<int>(item.CtlID) - no_flip;
+        const auto label = window_text(item.hwndItem);
         fill(dc, box, colors_.panel);
         round_rect(dc, box, 6, colors_.track);
+        if (item.CtlID >= first_filter) {
+            const bool preset = item.CtlID == default_preset;
+            const auto color = preset ? colors_.text : colors_.dim;
+            const int arrow_inset = preset ? 28 : 23;
+            arrow(dc, box.right - arrow_inset, (box.top + box.bottom) / 2, preset ? Arrow::up : Arrow::right, color);
+            text(dc, label.c_str(), {box.left + 16, box.top, box.right - 38, box.bottom}, regular_, color);
+            return;
+        }
         InflateRect(&box, -2, -2);
         round_rect(dc, box, 4, selected_flip ? colors_.fill : pressed ? colors_.hover : colors_.button);
-        const auto label = window_text(item.hwndItem);
         if (flip) {
             text(dc, label.c_str(), box, regular_, selected_flip ? colors_.accent : colors_.dim, DT_CENTER);
         } else {
-            arrow(dc, box.right - 23, (box.top + box.bottom) / 2, true, colors_.text);
+            arrow(dc, box.right - 23, (box.top + box.bottom) / 2, Arrow::down, colors_.text);
             text(dc, label.c_str(), {box.left + 15, box.top, box.right - 38, box.bottom}, regular_, colors_.text);
         }
     }
