@@ -214,19 +214,6 @@ private:
     }
 };
 
-void arrow(HDC dc, int x, int y, bool down, COLORREF color) {
-    const auto pen = CreatePen(PS_SOLID, 1, color);
-    const auto old = SelectObject(dc, pen);
-    const POINT points[] = {
-        down ? POINT{x - 5, y - 2} : POINT{x - 2, y - 5},
-        down ? POINT{x, y + 3} : POINT{x + 3, y},
-        down ? POINT{x + 5, y - 2} : POINT{x - 2, y + 5},
-    };
-    Polyline(dc, points, std::size(points));
-    SelectObject(dc, old);
-    DeleteObject(pen);
-}
-
 class View {
 public:
     View(VlcPlayer player, bool light_theme)

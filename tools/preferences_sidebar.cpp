@@ -16,6 +16,7 @@
 #include "player_window.hpp"
 #include "preferences_layout.hpp"
 #include "subtitle_preferences_view.hpp"
+#include "video_preferences_view.hpp"
 
 namespace preferences_sidebar {
 namespace {
@@ -38,6 +39,8 @@ constexpr Page pages[] = {
      subtitle_preferences_view::handle_input, subtitle_preferences_view::modal_open},
     {audio_preferences_view::create, audio_preferences_view::set_visible,
      audio_preferences_view::handle_input, nullptr},
+    {video_preferences_view::create, video_preferences_view::set_visible,
+     video_preferences_view::handle_input, nullptr},
 };
 
 struct Sidebar {

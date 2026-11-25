@@ -49,6 +49,7 @@ __declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) int input_Control(Input *, int, ...);
 __declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int var_Create(void *, const char *, int);
+__declspec(dllimport) int var_Type(void *, const char *);
 __declspec(dllimport) int var_Get(void *, const char *, VlcValue *);
 __declspec(dllimport) int var_Set(void *, const char *, VlcValue);
 __declspec(dllimport) int var_Change(void *, const char *, int, VlcValue *, VlcValue *);
@@ -91,6 +92,24 @@ inline LibVlc *new_metadata_library() {
 
 // These query numbers are from VLC 3.0.24's input_query_e.
 constexpr int input_add_slave = 0x24, input_restart_es = 0x27, input_get_vouts = 0x2b;
+
+struct VideoOutputs {
+    explicit VideoOutputs(Input *input) {
+        if (input)
+            input_Control(input, input_get_vouts, &items, &count);
+    }
+
+    ~VideoOutputs() {
+        for (std::size_t i = 0; i < count; ++i)
+            vlc_object_release(items[i]);
+        libvlc_free(items);
+    }
+
+    VideoOutputs(const VideoOutputs &) = delete;
+    VideoOutputs &operator=(const VideoOutputs &) = delete;
+    void **items = nullptr;
+    std::size_t count = 0;
+};
 
 inline bool active_playback(Input *input) {
     VlcValue state{};

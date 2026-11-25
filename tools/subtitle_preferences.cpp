@@ -7,34 +7,14 @@
 #include <mutex>
 #include <string_view>
 
-extern "C" {
-__declspec(dllimport) int var_Type(void *, const char *);
-}
-
 namespace subtitle_preferences {
 namespace {
 
 constexpr int bool_var = 0x20, float_var = 0x50, inherited_string = 0x8040;
 constexpr double ticks_per_second = 1000000;
 constexpr char filter_key[] = "sub-filter", duration_key[] = "subsdelay-factor", duration_filter[] = "subsdelay";
-
-struct VideoOutputs {
-    explicit VideoOutputs(Input *input) {
-        if (input)
-            input_Control(input, input_get_vouts, &items, &count);
-    }
-
-    ~VideoOutputs() {
-        for (std::size_t i = 0; i < count; ++i)
-            vlc_object_release(items[i]);
-        libvlc_free(items);
-    }
-
-    VideoOutputs(const VideoOutputs &) = delete;
-    VideoOutputs &operator=(const VideoOutputs &) = delete;
-    void **items = nullptr;
-    std::size_t count = 0;
-};
+using vlc_config::append_filter;
+using vlc_config::split_filter;
 
 InputRef current_input(Player player) {
     InputRef input(player.playlist ? playlist_CurrentInput(player.playlist) : nullptr, vlc_object_release);
@@ -46,52 +26,6 @@ InputRef current_input(Player player) {
 std::string filter_chain(void *object) {
     VlcValue value{};
     return var_Get(object, filter_key, &value) == 0 ? vlc_config::take_string(value.string) : "";
-}
-
-void append_filter(std::string &chain, std::string_view filter) {
-    if (filter.empty())
-        return;
-    if (!chain.empty())
-        chain += ':';
-    chain += filter;
-}
-
-struct FilterChain {
-    std::string before, selected, after;
-};
-
-FilterChain split_filter(std::string_view chain, std::string_view target) {
-    FilterChain result;
-    std::size_t start = 0;
-    int braces = 0;
-    char quote = '\0';
-    for (std::size_t i = 0; i <= chain.size(); ++i) {
-        const char ch = i < chain.size() ? chain[i] : '\0';
-        if (i == chain.size() || (ch == ':' && !quote && !braces)) {
-            const auto filter = chain.substr(start, i - start);
-            const auto first = filter.find_first_not_of(" \t");
-            if (first != std::string_view::npos) {
-                const auto name = filter.substr(first, filter.find_first_of("{ \t", first) - first);
-                if (name == target)
-                    append_filter(result.selected, filter);
-                else
-                    append_filter(result.selected.empty() ? result.before : result.after, filter);
-            }
-            start = i + 1;
-        } else if (quote) {
-            if (ch == '\\' && i + 1 < chain.size())
-                ++i;
-            else if (ch == quote)
-                quote = '\0';
-        } else if (ch == '\'' || ch == '"') {
-            quote = ch;
-        } else if (ch == '{') {
-            ++braces;
-        } else if (ch == '}' && braces) {
-            --braces;
-        }
-    }
-    return result;
 }
 
 void update_filter(void *object, std::string_view name, std::string_view module) {

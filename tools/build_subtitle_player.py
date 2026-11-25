@@ -27,7 +27,9 @@ CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vl
                 "input_item_GetMeta", "vlc_uri2path",
                 "input_Control", "vlc_path2uri",
                 "playlist_GetAout", "playlist_EnableAudioFilter", "aout_DevicesList", "aout_DeviceGet", "aout_DeviceSet", "vlc_gettext",
-                "playlist_Status", "config_GetPsz", "config_PutPsz", "config_GetPszChoices",
+                "playlist_Status", "playlist_SetRenderer", "config_GetPsz", "config_PutPsz", "config_GetPszChoices",
+                "config_ChainCreate", "config_ChainDestroy", "vlc_renderer_item_hold", "vlc_renderer_item_release",
+                "vlc_renderer_item_name", "vlc_renderer_item_sout", "vlc_renderer_item_flags",
                 "config_GetInt", "config_PutInt", "config_GetFloat", "config_PutFloat",
                 "config_SaveConfigFile", "demux_vaControl", "module_get_object", "text_style_Delete",
                 "vlc_list_children", "vlc_list_release", "GetLang_1",
@@ -42,7 +44,11 @@ LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_n
                   "libvlc_audio_equalizer_get_preamp", "libvlc_audio_equalizer_get_band_count",
                   "libvlc_audio_equalizer_get_amp_at_index", "libvlc_media_new_callbacks",
                   "libvlc_media_player_new_from_media", "libvlc_media_player_play", "libvlc_media_player_stop",
-                  "libvlc_media_player_get_state", "libvlc_media_player_release", "libvlc_audio_output_device_set")
+                  "libvlc_media_player_get_state", "libvlc_media_player_release", "libvlc_audio_output_device_set",
+                  "libvlc_renderer_discoverer_list_get", "libvlc_renderer_discoverer_list_release",
+                  "libvlc_renderer_discoverer_new", "libvlc_renderer_discoverer_release",
+                  "libvlc_renderer_discoverer_event_manager", "libvlc_renderer_discoverer_start",
+                  "libvlc_event_attach")
 
 # VLC preset keys and the corresponding 24 px symbols in the Figma icon sheet.
 PRESET_ICONS = {
@@ -109,6 +115,8 @@ def build_module(output, toolchain):
                         ROOT / "tools/subtitle_preferences.cpp", ROOT / "tools/subtitle_preferences_view.cpp",
                         ROOT / "tools/track_defaults.cpp", ROOT / "tools/audio_preferences.cpp",
                         ROOT / "tools/audio_preferences_view.cpp", ROOT / "tools/stereo_test.cpp",
+                        ROOT / "tools/video_preferences.cpp", ROOT / "tools/video_preferences_view.cpp",
+                        ROOT / "tools/video_renderers.cpp",
                         ROOT / "tools/subtitle_style_filter.cpp", ROOT / "tools/subtitle_speed_filter.cpp",
                         ROOT / "tools/opensubtitles.cpp", resources,
                         ROOT / "tools/subtitle_folder.cpp", ROOT / "tools/local_subtitles.cpp", ROOT / "tools/subtitle_drop.cpp",

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "vlc_input.hpp"
 
@@ -27,6 +28,57 @@ inline bool save(void *vlc) {
     VlcValue ignore{};
     return (var_Inherit(vlc, "ignore-config", boolean, &ignore) == 0 && ignore.boolean) ||
            config_SaveConfigFile(vlc) == 0;
+}
+
+inline void append_filter(std::string &chain, std::string_view filter) {
+    if (filter.empty())
+        return;
+    if (!chain.empty())
+        chain += ':';
+    chain += filter;
+}
+
+struct FilterChain {
+    std::string before, selected, after;
+};
+
+template<class Match>
+FilterChain split_filters(std::string_view chain, Match matches) {
+    FilterChain result;
+    std::size_t start = 0;
+    int braces = 0;
+    char quote = '\0';
+    for (std::size_t i = 0; i <= chain.size(); ++i) {
+        const char ch = i < chain.size() ? chain[i] : '\0';
+        if (i == chain.size() || (ch == ':' && !quote && !braces)) {
+            const auto filter = chain.substr(start, i - start);
+            const auto first = filter.find_first_not_of(" \t");
+            if (first != std::string_view::npos) {
+                const auto name = filter.substr(first, filter.find_first_of("{ \t", first) - first);
+                if (matches(name, filter))
+                    append_filter(result.selected, filter);
+                else
+                    append_filter(result.selected.empty() ? result.before : result.after, filter);
+            }
+            start = i + 1;
+        } else if (quote) {
+            if (ch == '\\' && i + 1 < chain.size())
+                ++i;
+            else if (ch == quote)
+                quote = '\0';
+        } else if (ch == '\'' || ch == '"') {
+            quote = ch;
+        } else if (ch == '{') {
+            ++braces;
+        } else if (ch == '}' && braces) {
+            --braces;
+        }
+    }
+    return result;
+}
+
+inline FilterChain split_filter(std::string_view chain, std::string_view target) {
+    return split_filters(chain, [target](std::string_view name, std::string_view) { return name == target; });
 }
 
 }
