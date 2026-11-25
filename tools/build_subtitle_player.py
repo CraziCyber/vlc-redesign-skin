@@ -62,21 +62,38 @@ PRESET_ICONS = {
 }
 
 
-def write_preset_icons(directory):
-    size, resource = 24, 104
-    # The last cell is the orange selection check.
-    cells = [*PRESET_ICONS.values(), (240, 416)]
+def write_icon_strip(bitmap, size, cells):
     sheet = Image.open(FIGMA / "icons-42_356.png").convert("RGBA")
     atlas = Image.new("RGBA", (len(cells) * size, size))
     for index, (x, y) in enumerate(cells):
         atlas.paste(sheet.crop((x, y, x + size, y + size)), (index * size, 0))
-    bitmap = directory / "equalizer_icons.bgra"
     bitmap.write_bytes(atlas.convert("RGBa").tobytes("raw", "BGRa"))
+
+
+def write_preset_icons(directory):
+    size, resource = 24, 104
+    # The last cell is the orange selection check.
+    cells = [*PRESET_ICONS.values(), (240, 416)]
+    bitmap = directory / "equalizer_icons.bgra"
+    write_icon_strip(bitmap, size, cells)
     keys = ", ".join(f'"{key}"' for key in PRESET_ICONS)
     (directory / "equalizer_icons.hpp").write_text(
         "#pragma once\n\nnamespace equalizer_icons {\n"
         f"constexpr int resource = {resource}, size = {size}, count = {len(cells)};\n"
         f"constexpr const char *keys[] = {{ {keys} }};\n"
+        "}\n", encoding="ascii",
+    )
+    return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
+
+
+def write_crop_link_icons(directory):
+    size, resource = 24, 105
+    cells = [(108, 416), (152, 416)]
+    bitmap = directory / "crop_link_icons.bgra"
+    write_icon_strip(bitmap, size, cells)
+    (directory / "crop_link_icons.hpp").write_text(
+        "#pragma once\n\nnamespace crop_link_icons {\n"
+        f"constexpr int resource = {resource}, size = {size}, count = {len(cells)};\n"
         "}\n", encoding="ascii",
     )
     return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
@@ -98,6 +115,7 @@ def build_module(output, toolchain):
         resource_script = write_resources(temp)
         with resource_script.open("a", encoding="utf-8") as script:
             script.write(write_preset_icons(temp))
+            script.write(write_crop_link_icons(temp))
             dialog_resource = ROOT / "tools/add_subtitles.rc"
             script.write(f'#include "{dialog_resource.as_posix()}"\n')
         subprocess.run([toolchain / "windres.exe", "-c", "65001", "-i", resource_script,

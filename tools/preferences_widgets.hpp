@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cwchar>
 #include <iterator>
 #include <optional>
@@ -135,6 +136,63 @@ inline void draw_toggle(HDC dc, RECT box, bool on, const Colors &colors, HFONT f
     round_rect(dc, right, 4, on ? RGB(211,121,24) : colors.button);
     text(dc, on ? L"ON" : L"OFF", on ? left : right, font, on ? colors.accent : colors.text, DT_CENTER);
 }
+
+class IconStrip {
+public:
+    IconStrip() = default;
+    IconStrip(const IconStrip &) = delete;
+    IconStrip &operator=(const IconStrip &) = delete;
+
+    ~IconStrip() {
+        if (previous_)
+            SelectObject(dc_, previous_);
+        if (bitmap_)
+            DeleteObject(bitmap_);
+        if (dc_)
+            DeleteDC(dc_);
+    }
+
+    void load(HINSTANCE module, int resource, int size, int count) {
+        const int width = size * count;
+        const DWORD bytes = width * size * 4;
+        const auto entry = FindResourceW(module, MAKEINTRESOURCEW(resource), RT_RCDATA);
+        if (!entry || SizeofResource(module, entry) != bytes)
+            return;
+        const auto source = LockResource(LoadResource(module, entry));
+        if (!source)
+            return;
+
+        dc_ = CreateCompatibleDC(nullptr);
+        if (!dc_)
+            return;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -size;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void *pixels = nullptr;
+        bitmap_ = CreateDIBSection(dc_, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+        if (bitmap_) {
+            std::memcpy(pixels, source, bytes);
+            previous_ = SelectObject(dc_, bitmap_);
+            size_ = size;
+        }
+    }
+
+    void draw(HDC dc, int x, int y, int index) const {
+        if (bitmap_)
+            AlphaBlend(dc, x, y, size_, size_, dc_, index * size_, 0, size_, size_,
+                       {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
+    }
+
+private:
+    HDC dc_ = nullptr;
+    HBITMAP bitmap_ = nullptr;
+    HGDIOBJ previous_ = nullptr;
+    int size_ = 0;
+};
 
 struct SliderTicks {
     int divisions{};

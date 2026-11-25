@@ -8,7 +8,6 @@
 #include "track_defaults.hpp"
 #include "vlc_config.hpp"
 
-#include <cstring>
 #include <utility>
 
 namespace audio_preferences_view {
@@ -154,64 +153,24 @@ constexpr const wchar_t *stereo_modes[] = {
 
 class PresetIcons {
 public:
-    ~PresetIcons() {
-        if (previous_)
-            SelectObject(dc_, previous_);
-        if (atlas_)
-            DeleteObject(atlas_);
-        if (dc_)
-            DeleteDC(dc_);
-    }
-
     void load(HINSTANCE module) {
         using namespace equalizer_icons;
-        constexpr int width = count * size;
-        constexpr DWORD bytes = width * size * 4;
-        const auto entry = FindResourceW(module, MAKEINTRESOURCEW(resource), RT_RCDATA);
-        if (!entry || SizeofResource(module, entry) != bytes)
-            return;
-        const auto source = LockResource(LoadResource(module, entry));
-        if (!source)
-            return;
-        BITMAPINFO info{};
-        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth = width;
-        info.bmiHeader.biHeight = -size;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        dc_ = CreateCompatibleDC(nullptr);
-        if (!dc_)
-            return;
-        void *pixels = nullptr;
-        atlas_ = CreateDIBSection(dc_, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-        if (atlas_) {
-            std::memcpy(pixels, source, bytes);
-            previous_ = SelectObject(dc_, atlas_);
-        }
+        icons_.load(module, resource, size, count);
     }
 
     void curve(HDC dc, int x, int y, std::string_view key) const {
         using namespace equalizer_icons;
         const auto icon = std::find(std::begin(keys), std::end(keys), key);
         if (icon != std::end(keys))
-            draw(dc, x, y, static_cast<int>(icon - std::begin(keys)));
+            icons_.draw(dc, x, y, static_cast<int>(icon - std::begin(keys)));
     }
 
     void selected(HDC dc, int x, int y) const {
-        draw(dc, x, y, equalizer_icons::count - 1);
+        icons_.draw(dc, x, y, equalizer_icons::count - 1);
     }
 
 private:
-    HDC dc_ = nullptr;
-    HBITMAP atlas_ = nullptr;
-    HGDIOBJ previous_ = nullptr;
-
-    void draw(HDC dc, int x, int y, int index) const {
-        using namespace equalizer_icons;
-        if (atlas_)
-            AlphaBlend(dc, x, y, size, size, dc_, index * size, 0, size, size, {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
-    }
+    IconStrip icons_;
 };
 
 class View {

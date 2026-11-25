@@ -2,6 +2,7 @@
 #define NOMINMAX
 #define UNICODE
 #include "video_preferences_view.hpp"
+#include "crop_link_icons.hpp"
 #include "preferences_widgets.hpp"
 #include "video_preferences.hpp"
 #include "video_renderers.hpp"
@@ -25,23 +26,44 @@ constexpr int filter_stride = 125, filter_height = 48;
 constexpr int preset_divider = first_filter_top + (filter_count - 1) * filter_stride + filter_height + 12;
 constexpr int preset_top = preset_divider + 21, preset_height = 42;
 constexpr int content_height = preset_top + preset_height + 13;
-constexpr int essential_inset = 16, slider_height = 30, slider_start = 87, slider_spacing = 76;
+constexpr int detail_inset = 16, slider_height = 30, slider_start = 87, slider_spacing = 76;
 constexpr int slider_count = std::size(essential_sliders);
 constexpr int essential_height = slider_start + (slider_count - 1) * slider_spacing + 47;
+constexpr int crop_field_top = 54, crop_field_height = 33, crop_row_spacing = 49;
+constexpr int crop_height = crop_field_top + crop_row_spacing + crop_field_height + detail_inset;
 constexpr UINT_PTR render_refresh = 1, essential_preview = 2;
 
 enum Control {
     no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
-    first_filter, default_preset = first_filter + filter_count, first_essential_slider
+    first_filter, essential_filter = first_filter, crop_filter, default_preset = first_filter + filter_count,
+    first_essential_slider, first_crop_edge = first_essential_slider + slider_count,
+    crop_top = first_crop_edge, crop_bottom, crop_left, crop_right, link_top_bottom, link_left_right
 };
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
+constexpr const wchar_t *crop_names[] = {L"Top", L"Bottom", L"Left", L"Right"};
+constexpr CropEdge paired_edges[] = {bottom_edge, top_edge, right_edge, left_edge};
+static_assert(std::size(crop_names) == crop_edge_count && std::size(paired_edges) == crop_edge_count);
 constexpr Field field(Control id) { return static_cast<Field>(id - zoom); }
 static_assert(field(crop) == Field::crop);
+
+struct FilterSection {
+    Control header, first, last;
+    int height;
+};
+constexpr FilterSection sections[] = {
+    {essential_filter, first_essential_slider, static_cast<Control>(first_essential_slider + slider_count - 1), essential_height},
+    {crop_filter, crop_top, link_left_right, crop_height},
+};
+constexpr bool expandable(int id) { return id >= first_filter && id < first_filter + int(std::size(sections)); }
 
 constexpr bool is_essential_slider(int id) {
     return id >= first_essential_slider && id < first_essential_slider + slider_count;
 }
+
+constexpr bool is_crop_edge(int id) { return id >= crop_top && id <= crop_right; }
+constexpr bool is_crop_link(int id) { return id == link_top_bottom || id == link_left_right; }
+constexpr bool is_edit(int id) { return id == rotate || is_crop_edge(id); }
 
 class View {
 public:
@@ -114,19 +136,19 @@ public:
             }
             return true;
         }
-        if (message.hwnd == control(rotate)) {
+        const int id = GetDlgCtrlID(message.hwnd);
+        if (is_edit(id)) {
             if (message.wParam == 'A' && GetKeyState(VK_CONTROL) < 0) {
                 SendMessageW(message.hwnd, EM_SETSEL, 0, -1);
                 return true;
             }
             if (message.wParam == VK_RETURN || message.wParam == VK_ESCAPE) {
                 if (message.wParam == VK_ESCAPE)
-                    SetWindowTextW(message.hwnd, original_angle_.c_str());
+                    SetWindowTextW(message.hwnd, original_edit_.c_str());
                 SetFocus(window_);
                 return true;
             }
-        } else if (message.wParam == VK_RETURN && !is_essential_slider(GetDlgCtrlID(message.hwnd)) &&
-                   message.hwnd != window_) {
+        } else if (message.wParam == VK_RETURN && !is_essential_slider(id) && message.hwnd != window_) {
             SendMessageW(message.hwnd, BM_CLICK, 0, 0);
             return true;
         }
@@ -144,10 +166,14 @@ private:
     video_renderers::Discovery renderers_;
     std::vector<video_renderers::Output> outputs_;
     std::optional<Control> dropdown_;
-    std::wstring original_angle_;
+    std::wstring original_edit_;
     EssentialPositions essential_{};
     std::optional<int> pending_slider_;
-    bool essential_expanded_ = false, essential_dirty_ = false;
+    CropMargins margins_{};
+    IconStrip crop_icons_;
+    std::array<bool, std::size(sections)> expanded_{};
+    std::array<bool, 2> crop_linked_{};
+    bool essential_dirty_ = false;
     bool window_owned_ = false, save_failed_ = false;
     int option_wheel_ = 0;
 
@@ -165,9 +191,10 @@ private:
         regular_ = make_font(15);
         heading_ = make_font(18, FW_SEMIBOLD);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
+        crop_icons_.load(module, crop_link_icons::resource, crop_link_icons::size, crop_link_icons::count);
         for (int id = no_flip; id <= default_preset; ++id) {
             const bool edit = id == rotate, list = id == options_list;
-            const bool pending = id > first_filter;
+            const bool pending = id >= first_filter && !expandable(id);
             const DWORD style = edit ? ES_AUTOHSCROLL : list ?
                 LBS_HASSTRINGS | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT : BS_OWNERDRAW;
             const wchar_t *label = L"";
@@ -183,12 +210,34 @@ private:
             if (!child)
                 return false;
             SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
-            if (id == first_filter && !create_essential_sliders(module))
+            if (id == essential_filter && !create_essential_sliders(module))
+                return false;
+            if (id == crop_filter && !create_crop_fields(module))
                 return false;
         }
         SendMessageW(control(rotate), EM_SETLIMITTEXT, 24, 0);
         SendMessageW(control(options_list), LB_SETITEMHEIGHT, 0, option_height);
         refresh();
+        return true;
+    }
+
+    bool create_crop_fields(HINSTANCE module) {
+        for (const auto id : {crop_top, crop_bottom, link_top_bottom, crop_left, crop_right, link_left_right}) {
+            const bool edit = is_crop_edge(id);
+            const auto child = CreateWindowExW(0, edit ? L"EDIT" : L"BUTTON", L"",
+                                               WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP |
+                                                   (edit ? ES_AUTOHSCROLL : BS_OWNERDRAW),
+                                               0, 0, 0, 0, window_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), module, nullptr);
+            if (!child)
+                return false;
+            if (edit) {
+                SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
+                SendMessageW(child, EM_SETLIMITTEXT, 16, 0);
+            } else {
+                update_link(id);
+            }
+        }
         return true;
     }
 
@@ -212,8 +261,37 @@ private:
         return true;
     }
 
-    int essential_extra_height() const {
-        return essential_expanded_ ? essential_height - filter_height : 0;
+    bool expanded(Control id) const {
+        return expandable(id) && expanded_[id - first_filter];
+    }
+
+    int section_extra_height(Control id) const {
+        return expanded(id) ? sections[id - first_filter].height - filter_height : 0;
+    }
+
+    int extra_height_before(Control id) const {
+        int height = 0;
+        for (const auto &section : sections) {
+            if (section.header < id)
+                height += section_extra_height(section.header);
+        }
+        return height;
+    }
+
+    RECT crop_box(Control id, LONG width) const {
+        const auto header = box(crop_filter, width);
+        const LONG left = header.left + detail_inset, right = header.right - detail_inset;
+        constexpr int link_width = 28, link_gap = 10, field_gap = 8;
+        const int row = is_crop_link(id) ? id - link_top_bottom : (id - crop_top) / 2;
+        const LONG top = header.top + crop_field_top + row * crop_row_spacing;
+        const LONG bottom = top + crop_field_height;
+        const LONG link_left = right - link_width;
+        if (is_crop_link(id))
+            return {link_left, top, right, bottom};
+        const LONG fields_right = link_left - link_gap;
+        const LONG middle = left + (fields_right - left - field_gap) / 2;
+        return (id == crop_top || id == crop_left) ? RECT{left, top, middle, bottom} :
+                                                    RECT{middle + field_gap, top, fields_right, bottom};
     }
 
     RECT box(Control id, LONG width) const {
@@ -229,15 +307,17 @@ private:
             return {right - rotate_width, y + rotate_top, right, y + rotate_top + rotate_height};
         if (is_essential_slider(id)) {
             const int top = y + first_filter_top + slider_start + (id - first_essential_slider) * slider_spacing;
-            const int slider_inset = inset + essential_inset - 7;
+            const int slider_inset = inset + detail_inset - 7;
             return {slider_inset, top, width - slider_inset, top + slider_height};
         }
-        if (id == default_preset)
-            return {inset, y + preset_top + essential_extra_height(), right,
-                    y + preset_top + essential_extra_height() + preset_height};
+        if (is_crop_edge(id) || is_crop_link(id))
+            return crop_box(id, width);
+        if (id == default_preset) {
+            const int top = y + preset_top + extra_height_before(id);
+            return {inset, top, right, top + preset_height};
+        }
         if (id >= first_filter) {
-            const int top = y + first_filter_top + (id - first_filter) * filter_stride +
-                            (id == first_filter ? 0 : essential_extra_height());
+            const int top = y + first_filter_top + (id - first_filter) * filter_stride + extra_height_before(id);
             return {inset, top, right, top + filter_height};
         }
         const int top = y + dropdown_top + (id - zoom) * row_stride;
@@ -246,9 +326,9 @@ private:
 
     void layout() {
         const auto width = bounds().right;
-        const int end = essential_expanded_ ? first_essential_slider + slider_count : default_preset + 1;
-        for (int id = no_flip; id < end; ++id) {
-            if (id == options_list)
+        for (int id = no_flip; id <= link_left_right; ++id) {
+            if (id == options_list || (is_essential_slider(id) && !expanded(essential_filter)) ||
+                (id >= first_crop_edge && !expanded(crop_filter)))
                 continue;
             auto area = box(static_cast<Control>(id), width);
             if (id == rotate) {
@@ -256,6 +336,11 @@ private:
                 area.right -= 8;
                 area.top += 8;
                 area.bottom -= 7;
+            } else if (is_crop_edge(id)) {
+                area.left += 72;
+                area.right -= 8;
+                area.top += 7;
+                area.bottom -= 6;
             }
             SetWindowPos(control(id), nullptr, area.left, area.top, area.right - area.left, area.bottom - area.top,
                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
@@ -282,8 +367,10 @@ private:
             SetWindowTextW(control(id), choice ? choices(key).begin()[*choice].label : L"Custom");
         }
         SetWindowTextW(control(render), wstring(video_renderers::selected(player_).name).c_str());
-        if (essential_expanded_)
+        if (expanded(essential_filter))
             refresh_essential();
+        if (expanded(crop_filter))
+            refresh_crop();
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
@@ -295,24 +382,48 @@ private:
             SendMessageW(control(first_essential_slider + i), TBM_SETPOS, TRUE, essential_[i]);
     }
 
-    void toggle_essential() {
+    void refresh_crop() {
+        margins_ = crop_margins(player_);
+        for (int i = 0; i < crop_edge_count; ++i)
+            set_unfocused_text(control(first_crop_edge + i), std::to_wstring(margins_[i]) + L" px");
+    }
+
+    void update_link(Control id) {
+        const bool linked = crop_linked_[id - link_top_bottom];
+        const wchar_t *name = id == link_top_bottom ?
+            (linked ? L"Unlink Top and Bottom" : L"Link Top and Bottom") :
+            (linked ? L"Unlink Left and Right" : L"Link Left and Right");
+        SetWindowTextW(control(id), name);
+        InvalidateRect(control(id), nullptr, FALSE);
+    }
+
+    void toggle_section(Control id) {
         close_dropdown(false);
-        if (essential_expanded_) {
-            save_essential();
-            if (is_essential_slider(GetDlgCtrlID(GetFocus())))
-                SetFocus(control(first_filter));
+        const auto &section = sections[id - first_filter];
+        const bool show = !expanded(id);
+        if (!show) {
+            if (id == essential_filter)
+                save_essential();
+            const auto focus = GetFocus();
+            const int focused_id = GetDlgCtrlID(focus);
+            if (IsChild(window_, focus) && focused_id >= section.first && focused_id <= section.last)
+                SetFocus(control(id));
         }
-        essential_expanded_ = !essential_expanded_;
-        SetWindowTextW(control(first_filter), essential_expanded_ ? L"Collapse Settings" : L"Expand Settings");
-        scroll_.set_content_height(content_height + essential_extra_height());
+        expanded_[id - first_filter] = show;
+        SetWindowTextW(control(id), show ? L"Collapse Settings" : L"Expand Settings");
+        scroll_.set_content_height(content_height + extra_height_before(default_preset));
         scroll_.move(scroll_.offset(), bounds());
         layout();
-        if (essential_expanded_)
-            refresh_essential();
-        for (int i = 0; i < slider_count; ++i)
-            ShowWindow(control(first_essential_slider + i), essential_expanded_ ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (essential_expanded_)
-            show_control(control(first_essential_slider));
+        if (show) {
+            if (id == essential_filter)
+                refresh_essential();
+            else
+                refresh_crop();
+        }
+        for (int child = section.first; child <= section.last; ++child)
+            ShowWindow(control(child), show ? SW_SHOWNOACTIVATE : SW_HIDE);
+        if (show)
+            show_control(control(id == crop_filter ? crop_left : section.first));
     }
 
     void apply_essential() {
@@ -373,21 +484,35 @@ private:
         divider(top + filters_top - 1);
         text(dc, L"Filters", {label_inset, top + filters_top, right, top + filters_top + 32}, heading_, colors_.text);
         for (int i = 0; i < filter_count; ++i) {
-            const auto button = box(static_cast<Control>(first_filter + i), area.right);
+            const auto id = static_cast<Control>(first_filter + i);
+            const auto button = box(id, area.right);
             text(dc, filter_names[i], {label_inset, button.top - 46, right, button.top - 9}, regular_, colors_.dim);
             if (i + 1 < filter_count)
-                divider(button.bottom + 19 + (i == 0 ? essential_extra_height() : 0));
+                divider(button.bottom + 19 + section_extra_height(id));
         }
-        if (essential_expanded_) {
-            const auto header = box(first_filter, area.right);
-            round_rect(dc, {header.left, header.top, header.right, header.top + essential_height}, 6, detail_colors_.panel);
-            for (int i = 0; i < slider_count; ++i) {
-                const auto slider = box(static_cast<Control>(first_essential_slider + i), area.right);
-                text(dc, essential_sliders[i].label, {header.left + essential_inset, slider.top - 33,
-                     header.right - essential_inset, slider.top - 7}, regular_, colors_.dim);
+        for (const auto &section : sections) {
+            if (expanded(section.header)) {
+                auto card = box(section.header, area.right);
+                card.bottom = card.top + section.height;
+                round_rect(dc, card, 6, detail_colors_.panel);
             }
         }
-        divider(top + preset_divider + essential_extra_height());
+        if (expanded(essential_filter)) {
+            const auto header = box(essential_filter, area.right);
+            for (int i = 0; i < slider_count; ++i) {
+                const auto slider = box(static_cast<Control>(first_essential_slider + i), area.right);
+                text(dc, essential_sliders[i].label, {header.left + detail_inset, slider.top - 33,
+                     header.right - detail_inset, slider.top - 7}, regular_, colors_.dim);
+            }
+        }
+        if (expanded(crop_filter)) {
+            for (int i = 0; i < crop_edge_count; ++i) {
+                const auto edit = crop_box(static_cast<Control>(first_crop_edge + i), area.right);
+                round_rect(dc, edit, 6, detail_colors_.track);
+                text(dc, crop_names[i], {edit.left + 12, edit.top, edit.left + 66, edit.bottom}, regular_, colors_.dim);
+            }
+        }
+        divider(top + preset_divider + extra_height_before(default_preset));
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
     }
@@ -410,19 +535,27 @@ private:
             }
             return;
         }
+        const auto id = static_cast<Control>(item.CtlID);
+        if (is_crop_link(id)) {
+            fill(dc, box, detail_colors_.panel);
+            constexpr int size = crop_link_icons::size;
+            crop_icons_.draw(dc, (box.left + box.right - size) / 2, (box.top + box.bottom - size) / 2,
+                             crop_linked_[id - link_top_bottom] ? 1 : 0);
+            return;
+        }
         const bool flip = item.CtlID <= vertical;
         const bool selected_flip = flip && static_cast<int>(transform_.flip) == static_cast<int>(item.CtlID) - no_flip;
         const auto label = window_text(item.hwndItem);
         fill(dc, box, colors_.panel);
-        const bool expanded = item.CtlID == first_filter && essential_expanded_;
-        round_rect(dc, box, 6, expanded ? detail_colors_.panel : colors_.track);
-        if (expanded)
+        const bool open = expanded(id);
+        round_rect(dc, box, 6, open ? detail_colors_.panel : colors_.track);
+        if (open)
             fill(dc, {box.left, box.top + 6, box.right, box.bottom}, detail_colors_.panel);
         if (item.CtlID >= first_filter) {
             const bool preset = item.CtlID == default_preset;
             const auto color = preset ? colors_.text : colors_.dim;
             const int arrow_inset = preset ? 28 : 23;
-            const auto direction = preset ? Arrow::up : expanded ? Arrow::down : Arrow::right;
+            const auto direction = preset ? Arrow::up : open ? Arrow::down : Arrow::right;
             arrow(dc, box.right - arrow_inset, (box.top + box.bottom) / 2, direction, color);
             text(dc, label.c_str(), {box.left + 16, box.top, box.right - 38, box.bottom}, regular_, color);
             return;
@@ -569,20 +702,36 @@ private:
         return false;
     }
 
+    void commit_edit(Control id, const std::wstring &value) {
+        if (id == rotate) {
+            if (const auto degrees = parse_number(value, L" deg")) {
+                transform_.degrees = *degrees;
+                save_failed_ = !set_transform(player_, transform_);
+            }
+        } else if (const auto pixels = parse_number(value, L" px");
+                   pixels && *pixels >= 0 && *pixels <= max_crop_margin && std::floor(*pixels) == *pixels) {
+            const int edge = id - first_crop_edge;
+            auto next = margins_;
+            next[edge] = static_cast<int>(*pixels);
+            if (crop_linked_[edge / 2])
+                next[paired_edges[edge]] = next[edge];
+            if (next != margins_)
+                save_failed_ = !set_crop_margins(player_, next);
+        }
+    }
+
     void command(Control id, int event) {
         if (id == options_list && event == LBN_KILLFOCUS) {
             close_dropdown(false);
-        } else if (id == rotate) {
+        } else if (is_edit(id)) {
             if (event == EN_SETFOCUS) {
-                original_angle_ = window_text(control(rotate));
-                SendMessageW(control(rotate), EM_SETSEL, 0, -1);
-                show_control(control(rotate));
+                original_edit_ = window_text(control(id));
+                SendMessageW(control(id), EM_SETSEL, 0, -1);
+                show_control(control(id));
             } else if (event == EN_KILLFOCUS) {
-                const auto value = window_text(control(rotate));
-                if (const auto degrees = parse_number(value, L" deg"); degrees && value != original_angle_) {
-                    transform_.degrees = *degrees;
-                    save_failed_ = !set_transform(player_, transform_);
-                }
+                const auto value = window_text(control(id));
+                if (value != original_edit_)
+                    commit_edit(id, value);
                 refresh();
             }
         } else if (event == BN_CLICKED && id >= no_flip && id <= vertical) {
@@ -594,8 +743,12 @@ private:
             }
         } else if (event == BN_CLICKED && id >= zoom && id <= render) {
             open_dropdown(id);
-        } else if (event == BN_CLICKED && id == first_filter) {
-            toggle_essential();
+        } else if (event == BN_CLICKED && expandable(id)) {
+            toggle_section(id);
+        } else if (event == BN_CLICKED && is_crop_link(id)) {
+            auto &linked = crop_linked_[id - link_top_bottom];
+            linked = !linked;
+            update_link(id);
         }
     }
 
@@ -617,11 +770,23 @@ private:
                 update_renderers(false);
             return 0;
         case WM_MOUSEWHEEL: wheel(GET_WHEEL_DELTA_WPARAM(wp)); return 0;
-        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDOWN: {
+            const POINT pointer{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            if (expanded(crop_filter)) {
+                const LONG width = bounds().right;
+                for (int id = crop_top; id <= crop_right; ++id) {
+                    const auto box = crop_box(static_cast<Control>(id), width);
+                    if (PtInRect(&box, pointer)) {
+                        SetFocus(control(id));
+                        return 0;
+                    }
+                }
+            }
             SetFocus(window_);
-            if (scroll_.start_drag(window_, bounds(), GET_X_LPARAM(lp), GET_Y_LPARAM(lp)))
+            if (scroll_.start_drag(window_, bounds(), pointer.x, pointer.y))
                 layout();
             return 0;
+        }
         case WM_MOUSEMOVE:
             if (scroll_.drag(bounds(), GET_Y_LPARAM(lp)))
                 layout();
@@ -656,7 +821,11 @@ private:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLOREDIT: {
             const auto dc = reinterpret_cast<HDC>(wp);
-            const auto background = message == WM_CTLCOLORLISTBOX ? colors_.button : colors_.track;
+            auto background = colors_.track;
+            if (message == WM_CTLCOLORLISTBOX)
+                background = colors_.button;
+            else if (is_crop_edge(GetDlgCtrlID(reinterpret_cast<HWND>(lp))))
+                background = detail_colors_.track;
             SetTextColor(dc, colors_.text);
             SetBkColor(dc, background);
             SetDCBrushColor(dc, background);

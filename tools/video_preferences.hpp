@@ -3,6 +3,7 @@
 #include <array>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <optional>
 
 #include "vlc_input.hpp"
@@ -23,6 +24,10 @@ struct Choice {
     const char *text = nullptr;
     float number = 0;
 };
+
+enum CropEdge { top_edge, bottom_edge, left_edge, right_edge, crop_edge_count };
+using CropMargins = std::array<int, crop_edge_count>;
+inline constexpr int max_crop_margin = std::numeric_limits<int>::max() / 2;
 
 enum class Effect { adjust, sharpen, deband, grain };
 
@@ -53,6 +58,8 @@ bool set_transform(VlcPlayer player, Transform value);
 std::initializer_list<Choice> choices(Field field);
 std::optional<int> selected(VlcPlayer player, Field field);
 bool set_choice(VlcPlayer player, Field field, int index);
+CropMargins crop_margins(VlcPlayer player);
+bool set_crop_margins(VlcPlayer player, const CropMargins &margins);
 EssentialPositions essential_positions(VlcPlayer player);
 void set_essential_position(VlcPlayer player, const EssentialSlider &slider, int position);
 

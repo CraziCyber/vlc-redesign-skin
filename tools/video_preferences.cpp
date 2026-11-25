@@ -52,6 +52,8 @@ namespace video_preferences {
 namespace {
 
 constexpr char filter_key[] = "video-filter";
+constexpr char crop_key[] = "crop";
+constexpr CropEdge crop_order[] = {left_edge, top_edge, right_edge, bottom_edge};
 
 enum class Type { text, real, integer };
 struct Setting {
@@ -72,7 +74,7 @@ constexpr Setting settings[] = {
     {"aspect-ratio", {{L"Default", ""}, {L"16:9", "16:9"}, {L"4:3", "4:3"},
                      {L"1:1", "1:1"}, {L"16:10", "16:10"}, {L"21:9", "21:9"},
                      {L"2.35:1", "235:100"}}, Type::text, true},
-    {"crop", {{L"Default", ""}, {L"16:9", "16:9"}, {L"4:3", "4:3"},
+    {crop_key, {{L"Default", ""}, {L"16:9", "16:9"}, {L"4:3", "4:3"},
               {L"1:1", "1:1"}, {L"16:10", "16:10"}, {L"21:9", "21:9"},
               {L"2.35:1", "235:100"}}, Type::text, true},
 };
@@ -359,6 +361,40 @@ bool set_choice(VlcPlayer player, Field field, int index) {
     } else if (player.playlist) {
         var_Set(player.playlist, config.key, value);
     }
+    return vlc_config::save(player.vlc);
+}
+
+CropMargins crop_margins(VlcPlayer player) {
+    const auto geometry = read_string(player, crop_key);
+    const char *next = geometry.data(), *end = next + geometry.size();
+    CropMargins margins{};
+    for (const auto edge : crop_order) {
+        const auto parsed = std::from_chars(next, end, margins[edge]);
+        if (parsed.ec != std::errc{} || margins[edge] < 0 || margins[edge] > max_crop_margin)
+            return {};
+        if (edge == bottom_edge)
+            return parsed.ptr == end ? margins : CropMargins{};
+        if (parsed.ptr == end || *parsed.ptr != '+')
+            return {};
+        next = parsed.ptr + 1;
+    }
+    return margins;
+}
+
+bool set_crop_margins(VlcPlayer player, const CropMargins &margins) {
+    std::string geometry;
+    if (margins != CropMargins{}) {
+        // VLC accepts pixel borders together in left+top+right+bottom order.
+        for (const auto edge : crop_order) {
+            if (!geometry.empty())
+                geometry += '+';
+            geometry += std::to_string(margins[edge]);
+        }
+    }
+    config_PutPsz(player.vlc, crop_key, geometry.c_str());
+    VlcValue value{};
+    value.string = geometry.data();
+    apply_live(player, [&](void *object) { var_Set(object, crop_key, value); });
     return vlc_config::save(player.vlc);
 }
 
