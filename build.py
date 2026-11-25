@@ -607,6 +607,7 @@ def preferences_sidebar(L, art, *, windowed):
     labelled_tabs = {
         1: ("Subtitles", "subtitles", "subtitles_outline_active"),
         2: ("Audio", "audio", "audio_two_tone"),
+        3: ("Video", "video", "video_active"),
     }
     for number in range(1, PREFERENCES_TABS + 1):
         x = left + (PREFERENCES_TABS - number) * tab_width
