@@ -5,6 +5,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <string>
 
 #include "vlc_input.hpp"
 
@@ -40,6 +41,30 @@ struct ColorSettings {
 
     std::array<bool, static_cast<int>(ColorEffect::count)> active{};
     std::array<int, static_cast<int>(ColorValue::count)> values{};
+};
+
+enum class VideoEffect { interactive_zoom, mirror, text_overlay, logo_overlay, denoiser, antiflicker, motion_blur, count };
+enum class EffectValue {
+    mirror_split, mirror_direction, text_position, text_size, logo_position, logo_opacity,
+    spatial_luma, spatial_chroma, temporal_luma, temporal_chroma, flicker_window, flicker_softening, blur_strength, count
+};
+
+struct EffectOption {
+    VideoEffect effect;
+    const char *key, *name;
+    int minimum, maximum;
+    bool real = false;
+};
+
+struct EffectSettings {
+    bool &enabled(VideoEffect effect) { return active[static_cast<int>(effect)]; }
+    bool enabled(VideoEffect effect) const { return active[static_cast<int>(effect)]; }
+    double &value(EffectValue option) { return values[static_cast<int>(option)]; }
+    double value(EffectValue option) const { return values[static_cast<int>(option)]; }
+
+    std::array<bool, static_cast<int>(VideoEffect::count)> active{};
+    std::array<double, static_cast<int>(EffectValue::count)> values{};
+    std::string text, logo;
 };
 
 enum CropEdge { top_edge, bottom_edge, left_edge, right_edge, crop_edge_count };
@@ -81,6 +106,9 @@ EssentialPositions essential_positions(VlcPlayer player);
 void set_essential_position(VlcPlayer player, const EssentialSlider &slider, int position);
 ColorSettings color_settings(VlcPlayer player);
 void apply_color_settings(VlcPlayer player, ColorEffect effect, const ColorSettings &settings);
+const EffectOption &effect_option(EffectValue id);
+EffectSettings effect_settings(VlcPlayer player);
+void apply_effect_settings(VlcPlayer player, VideoEffect effect, const EffectSettings &settings);
 
 inline constexpr char software_video_filter[] = "redesignsoftwarevideo";
 int open_software_video_filter(void *object);

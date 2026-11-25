@@ -32,17 +32,25 @@ constexpr int essential_height = slider_start + (slider_count - 1) * slider_spac
 constexpr int crop_field_top = 54, crop_field_height = 33, crop_row_spacing = 49;
 constexpr int crop_height = crop_field_top + crop_row_spacing + crop_field_height + detail_inset;
 constexpr int colors_height = 755, color_toggle_width = 68, color_field_width = 116, color_row_height = 32;
+constexpr int geometry_height = 254, overlay_height = 512, advanced_height = 659;
+constexpr int detail_field_height = 36, detail_choice_width = 180, browse_width = 94;
 constexpr UINT_PTR render_refresh = 1, slider_preview = 2;
 
 enum Control {
     no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
-    first_filter, essential_filter = first_filter, crop_filter, colors_filter, default_preset = first_filter + filter_count,
+    first_filter, essential_filter = first_filter, crop_filter, colors_filter, geometry_filter, overlay_filter,
+    advanced_filter, default_preset,
     first_essential_slider, first_crop_edge = first_essential_slider + slider_count,
     crop_top = first_crop_edge, crop_bottom, crop_left, crop_right, link_top_bottom, link_left_right,
     extract_hex, extract_swatch, extract_toggle, threshold_hex, threshold_swatch, threshold_toggle,
     threshold_saturation, threshold_similarity, negate_toggle, posterize_toggle, gradient_toggle,
-    gradient_mode, gradient_color, gradient_cartoon, sepia_slider
+    gradient_mode, gradient_color, gradient_cartoon, sepia_slider,
+    interactive_zoom, mirror_toggle, mirror_direction, text_toggle, overlay_text, text_position, text_size,
+    logo_toggle, logo_browse, logo_position, logo_opacity,
+    denoiser_toggle, spatial_luma, spatial_chroma, temporal_luma, temporal_chroma,
+    antiflicker_toggle, flicker_window, flicker_softening, blur_toggle, blur_strength
 };
+static_assert(default_preset == first_filter + filter_count);
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
 constexpr const wchar_t *crop_names[] = {L"Top", L"Bottom", L"Left", L"Right"};
@@ -59,7 +67,11 @@ constexpr FilterSection sections[] = {
     {essential_filter, first_essential_slider, static_cast<Control>(first_essential_slider + slider_count - 1), essential_height},
     {crop_filter, crop_top, link_left_right, crop_height},
     {colors_filter, extract_hex, sepia_slider, colors_height},
+    {geometry_filter, interactive_zoom, mirror_direction, geometry_height},
+    {overlay_filter, text_toggle, logo_opacity, overlay_height},
+    {advanced_filter, denoiser_toggle, blur_strength, advanced_height},
 };
+static_assert(std::size(sections) == filter_count);
 constexpr bool expandable(int id) { return id >= first_filter && id < first_filter + int(std::size(sections)); }
 
 constexpr bool is_essential_slider(int id) {
@@ -100,8 +112,71 @@ static_assert(std::size(color_rows) == sepia_slider - extract_hex + 1);
 constexpr bool is_color_control(int id) { return id >= extract_hex && id <= sepia_slider; }
 constexpr const ColorRow &color_row(int id) { return color_rows[id - extract_hex]; }
 constexpr bool color_type(int id, ColorControl type) { return is_color_control(id) && color_row(id).type == type; }
-constexpr bool is_slider(int id) { return is_essential_slider(id) || color_type(id, ColorControl::slider); }
-constexpr bool is_edit(int id) { return id == rotate || is_crop_edge(id) || color_type(id, ColorControl::hex); }
+
+enum class EffectControl { toggle, dropdown, text, number, browse, slider };
+struct EffectRow {
+    Control id;
+    int top;
+    EffectControl type;
+    const wchar_t *label;
+    VideoEffect effect;
+    EffectValue value = EffectValue::count;
+};
+constexpr EffectRow effect_rows[] = {
+    {interactive_zoom, 54, EffectControl::toggle, L"Interactive Zoom", VideoEffect::interactive_zoom},
+    {mirror_toggle,   142, EffectControl::toggle, L"Mirror", VideoEffect::mirror},
+    {mirror_direction, 190, EffectControl::dropdown, L"Direction", VideoEffect::mirror},
+    {text_toggle,       54, EffectControl::toggle, L"Add Text", VideoEffect::text_overlay},
+    {overlay_text,      98, EffectControl::text, L"", VideoEffect::text_overlay},
+    {text_position,    148, EffectControl::dropdown, L"Position", VideoEffect::text_overlay, EffectValue::text_position},
+    {text_size,        211, EffectControl::number, L"Font Size", VideoEffect::text_overlay, EffectValue::text_size},
+    {logo_toggle,      275, EffectControl::toggle, L"Add Logo", VideoEffect::logo_overlay},
+    {logo_browse,      320, EffectControl::browse, L"Browse…", VideoEffect::logo_overlay},
+    {logo_position,    373, EffectControl::dropdown, L"Position", VideoEffect::logo_overlay, EffectValue::logo_position},
+    {logo_opacity,     466, EffectControl::slider, L"Opacity", VideoEffect::logo_overlay, EffectValue::logo_opacity},
+    {denoiser_toggle,    54, EffectControl::toggle, L"Denoiser", VideoEffect::denoiser},
+    {spatial_luma,       99, EffectControl::number, L"Spatial Luma", VideoEffect::denoiser, EffectValue::spatial_luma},
+    {spatial_chroma,    150, EffectControl::number, L"Spatial Chroma", VideoEffect::denoiser, EffectValue::spatial_chroma},
+    {temporal_luma,     201, EffectControl::number, L"Temporal Luma", VideoEffect::denoiser, EffectValue::temporal_luma},
+    {temporal_chroma,   252, EffectControl::number, L"Temporal Chroma", VideoEffect::denoiser, EffectValue::temporal_chroma},
+    {antiflicker_toggle,322, EffectControl::toggle, L"Anti-Flickering", VideoEffect::antiflicker},
+    {flicker_window,    397, EffectControl::slider, L"Window Size", VideoEffect::antiflicker, EffectValue::flicker_window},
+    {flicker_softening, 473, EffectControl::slider, L"Softening", VideoEffect::antiflicker, EffectValue::flicker_softening},
+    {blur_toggle,       537, EffectControl::toggle, L"Motion Blur", VideoEffect::motion_blur},
+    {blur_strength,     613, EffectControl::slider, L"Strength", VideoEffect::motion_blur, EffectValue::blur_strength},
+};
+static_assert(std::size(effect_rows) == blur_strength - interactive_zoom + 1);
+
+struct IntegerChoice { const wchar_t *label; int value; };
+constexpr std::initializer_list<IntegerChoice> mirror_choices = {
+    {L"Left to Right", 0}, {L"Right to Left", 1}, {L"Top to Bottom", 2}, {L"Bottom to Top", 3},
+};
+constexpr std::initializer_list<IntegerChoice> overlay_positions = {
+    {L"Default", -1},
+    {L"Top Left", 5}, {L"Top Center", 4}, {L"Top Right", 6},
+    {L"Center Left", 1}, {L"Center", 0}, {L"Center Right", 2},
+    {L"Bottom Left", 9}, {L"Bottom Center", 8}, {L"Bottom Right", 10},
+};
+
+constexpr const FilterSection *detail_section(int id) {
+    for (const auto &section : sections) {
+        if (id >= section.first && id <= section.last)
+            return &section;
+    }
+    return nullptr;
+}
+
+constexpr bool is_effect_control(int id) { return id >= interactive_zoom && id <= blur_strength; }
+constexpr const EffectRow &effect_row(int id) { return effect_rows[id - interactive_zoom]; }
+constexpr bool effect_type(int id, EffectControl type) { return is_effect_control(id) && effect_row(id).type == type; }
+constexpr auto effect_choices(Control id) { return id == mirror_direction ? mirror_choices : overlay_positions; }
+constexpr bool is_slider(int id) {
+    return is_essential_slider(id) || color_type(id, ColorControl::slider) || effect_type(id, EffectControl::slider);
+}
+constexpr bool is_edit(int id) {
+    return id == rotate || is_crop_edge(id) || color_type(id, ColorControl::hex) ||
+           effect_type(id, EffectControl::text) || effect_type(id, EffectControl::number);
+}
 
 class View {
 public:
@@ -215,6 +290,8 @@ private:
     std::array<bool, std::size(sections)> expanded_{};
     std::array<bool, 2> crop_linked_{};
     ColorSettings color_settings_;
+    EffectSettings effect_settings_;
+    std::wstring logo_error_;
     std::array<COLORREF, 16> custom_colors_{};
     bool slider_dirty_ = false;
     bool window_owned_ = false, save_failed_ = false, modal_ = false;
@@ -238,7 +315,7 @@ private:
         crop_icons_.load(module, crop_link_icons::resource, crop_link_icons::size, crop_link_icons::count);
         for (int id = no_flip; id <= default_preset; ++id) {
             const bool edit = id == rotate, list = id == options_list;
-            const bool pending = id >= first_filter && !expandable(id);
+            const bool pending = id == default_preset;
             const DWORD style = edit ? ES_AUTOHSCROLL : list ?
                 LBS_HASSTRINGS | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT : BS_OWNERDRAW;
             const wchar_t *label = L"";
@@ -260,6 +337,9 @@ private:
                 return false;
             if (id == colors_filter && !create_color_controls(module))
                 return false;
+            if (id >= geometry_filter && id <= advanced_filter &&
+                !create_effect_controls(module, sections[id - first_filter]))
+                return false;
         }
         SendMessageW(control(rotate), EM_SETLIMITTEXT, 24, 0);
         SendMessageW(control(options_list), LB_SETITEMHEIGHT, 0, option_height);
@@ -267,21 +347,46 @@ private:
         return true;
     }
 
+    HWND create_detail_control(HINSTANCE module, Control id, const wchar_t *label, bool edit, bool slider) const {
+        const DWORD style = edit ? ES_AUTOHSCROLL :
+                            slider ? TBS_NOTICKS | TBS_FIXEDLENGTH | TBS_TRANSPARENTBKGND : BS_OWNERDRAW;
+        const auto child = CreateWindowExW(0, edit ? L"EDIT" : slider ? TRACKBAR_CLASSW : L"BUTTON", label,
+                                           WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | style, 0, 0, 0, 0, window_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), module, nullptr);
+        if (child)
+            SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
+        return child;
+    }
+
     bool create_color_controls(HINSTANCE module) {
         for (const auto &row : color_rows) {
             const bool edit = row.type == ColorControl::hex, slider = row.type == ColorControl::slider;
-            const DWORD style = edit ? ES_AUTOHSCROLL :
-                                slider ? TBS_NOTICKS | TBS_FIXEDLENGTH | TBS_TRANSPARENTBKGND : BS_OWNERDRAW;
-            const auto child = CreateWindowExW(0, edit ? L"EDIT" : slider ? TRACKBAR_CLASSW : L"BUTTON", row.label,
-                                               WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | style, 0, 0, 0, 0, window_,
-                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(row.id)), module, nullptr);
+            const auto child = create_detail_control(module, row.id, row.label, edit, slider);
             if (!child)
                 return false;
-            SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
             if (edit)
                 SendMessageW(child, EM_SETLIMITTEXT, 14, 0);
             if (slider)
                 setup_slider(child, 0, row.id == sepia_slider ? sepia_limit : threshold_limit);
+        }
+        return true;
+    }
+
+    bool create_effect_controls(HINSTANCE module, const FilterSection &section) {
+        for (int id = section.first; id <= section.last; ++id) {
+            const auto &row = effect_row(id);
+            const bool edit = is_edit(id), slider = row.type == EffectControl::slider;
+            const auto child = create_detail_control(module, row.id, edit ? L"" : row.label, edit, slider);
+            if (!child)
+                return false;
+            if (row.type == EffectControl::number)
+                SendMessageW(child, EM_SETLIMITTEXT, 24, 0);
+            if (row.type == EffectControl::text)
+                SendMessageW(child, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Text to show on the video"));
+            if (slider) {
+                const auto &option = effect_option(row.value);
+                setup_slider(child, option.minimum, option.maximum);
+            }
         }
         return true;
     }
@@ -379,6 +484,21 @@ private:
         return {};
     }
 
+    RECT effect_box(const EffectRow &row, LONG width) const {
+        const auto header = box(detail_section(row.id)->header, width);
+        const LONG left = header.left + detail_inset, right = header.right - detail_inset;
+        const LONG top = header.top + row.top;
+        switch (row.type) {
+        case EffectControl::toggle: return {right - color_toggle_width, top, right, top + color_row_height};
+        case EffectControl::dropdown: return {right - detail_choice_width, top, right, top + dropdown_height};
+        case EffectControl::text: return {left, top, right, top + detail_field_height};
+        case EffectControl::number: return {right - rotate_width, top, right, top + detail_field_height};
+        case EffectControl::browse: return {right - browse_width, top, right, top + detail_field_height};
+        case EffectControl::slider: return {left - 7, top, right + 7, top + slider_height};
+        }
+        return {};
+    }
+
     RECT box(Control id, LONG width) const {
         const LONG right = width - inset;
         const int y = -scroll_.offset();
@@ -399,6 +519,8 @@ private:
             return crop_box(id, width);
         if (is_color_control(id))
             return color_box(color_row(id), width);
+        if (is_effect_control(id))
+            return effect_box(effect_row(id), width);
         if (id == default_preset) {
             const int top = y + preset_top + extra_height_before(id);
             return {inset, top, right, top + preset_height};
@@ -413,13 +535,12 @@ private:
 
     void layout() {
         const auto width = bounds().right;
-        for (int id = no_flip; id <= sepia_slider; ++id) {
-            if (id == options_list || (is_essential_slider(id) && !expanded(essential_filter)) ||
-                ((is_crop_edge(id) || is_crop_link(id)) && !expanded(crop_filter)) ||
-                (is_color_control(id) && !expanded(colors_filter)))
+        for (int id = no_flip; id <= blur_strength; ++id) {
+            const auto section = detail_section(id);
+            if (id == options_list || (section && !expanded(section->header)))
                 continue;
             auto area = box(static_cast<Control>(id), width);
-            if (id == rotate) {
+            if (id == rotate || (is_effect_control(id) && is_edit(id))) {
                 area.left += 13;
                 area.right -= 8;
                 area.top += 8;
@@ -466,6 +587,8 @@ private:
             refresh_crop();
         if (expanded(colors_filter))
             refresh_colors();
+        if (expanded(geometry_filter) || expanded(overlay_filter) || expanded(advanced_filter))
+            refresh_effects();
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
@@ -554,6 +677,116 @@ private:
         refresh();
     }
 
+    int effect_selection(Control id) const {
+        if (id == mirror_direction)
+            return static_cast<int>(effect_settings_.value(EffectValue::mirror_split) * 2 +
+                                    effect_settings_.value(EffectValue::mirror_direction));
+        const auto choices = effect_choices(id);
+        const auto value = effect_settings_.value(effect_row(id).value);
+        const auto selected = std::find_if(choices.begin(), choices.end(),
+                                           [value](const auto &choice) { return choice.value == value; });
+        return selected == choices.end() ? -1 : static_cast<int>(selected - choices.begin());
+    }
+
+    void refresh_effects() {
+        if (pending_slider_ && is_effect_control(*pending_slider_))
+            return;
+        effect_settings_ = effect_settings(player_);
+        for (const auto &row : effect_rows) {
+            const auto child = control(row.id);
+            switch (row.type) {
+            case EffectControl::text:
+                set_unfocused_text(child, wstring(effect_settings_.text));
+                break;
+            case EffectControl::number: {
+                const auto value = effect_settings_.value(row.value);
+                const auto text = row.id == text_size
+                    ? (value == 0 ? L"Auto" : number_text(value, 0, L" px"))
+                    : number_text(value, 3, L"");
+                set_unfocused_text(child, text);
+                break;
+            }
+            case EffectControl::dropdown: {
+                const auto selected = effect_selection(row.id);
+                SetWindowTextW(child, selected < 0 ? L"Custom" : effect_choices(row.id).begin()[selected].label);
+                break;
+            }
+            case EffectControl::slider:
+                SendMessageW(child, TBM_SETPOS, TRUE, static_cast<int>(effect_settings_.value(row.value)));
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    void save_effect(VideoEffect effect) {
+        apply_effect_settings(player_, effect, effect_settings_);
+        save_failed_ = !vlc_config::save(player_.vlc);
+    }
+
+    bool change_effect_value(const EffectRow &row, double value) {
+        auto &current = effect_settings_.value(row.value);
+        if (current == value)
+            return false;
+        current = value;
+        return true;
+    }
+
+    void pick_logo(bool enable) {
+        std::vector<wchar_t> path(32768);
+        OPENFILENAMEW picker{};
+        picker.lStructSize = sizeof(picker);
+        picker.hwndOwner = GetAncestor(window_, GA_ROOT);
+        picker.lpstrFilter = L"Image files (*.png;*.jpg;*.jpeg;*.bmp;*.webp)\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0"
+                             L"All files\0*.*\0";
+        picker.lpstrTitle = L"Choose Logo Image";
+        picker.lpstrFile = path.data();
+        picker.nMaxFile = static_cast<DWORD>(path.size());
+        picker.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
+        modal_ = true;
+        const bool chosen = GetOpenFileNameW(&picker);
+        modal_ = false;
+        if (!chosen) {
+            if (CommDlgExtendedError()) {
+                logo_error_ = L"Could not open the file picker";
+                InvalidateRect(window_, nullptr, FALSE);
+            }
+            return;
+        }
+
+        std::wstring filename(path.data());
+        // VLC separates logo filenames and animation timings with semicolons and commas.
+        if (filename.find_first_of(L",;") != std::wstring::npos) {
+            const auto length = GetShortPathNameW(filename.c_str(), path.data(), picker.nMaxFile);
+            if (!length || length >= picker.nMaxFile || std::wstring_view(path.data(), length).find_first_of(L",;") !=
+                                                         std::wstring_view::npos) {
+                logo_error_ = L"Choose a path without , or ;";
+                InvalidateRect(window_, nullptr, FALSE);
+                return;
+            }
+            filename.assign(path.data(), length);
+        }
+
+        logo_error_.clear();
+        effect_settings_.logo = utf8(filename.c_str());
+        if (enable)
+            effect_settings_.enabled(VideoEffect::logo_overlay) = true;
+        save_effect(VideoEffect::logo_overlay);
+        refresh();
+    }
+
+    void toggle_effect(const EffectRow &row) {
+        auto &enabled = effect_settings_.enabled(row.effect);
+        if (row.effect == VideoEffect::logo_overlay && !enabled && effect_settings_.logo.empty()) {
+            pick_logo(true);
+            return;
+        }
+        enabled = !enabled;
+        save_effect(row.effect);
+        refresh();
+    }
+
     void update_link(Control id) {
         const bool linked = crop_linked_[id - link_top_bottom];
         const wchar_t *name = id == link_top_bottom ?
@@ -584,8 +817,10 @@ private:
                 refresh_essential();
             else if (id == crop_filter)
                 refresh_crop();
-            else
+            else if (id == colors_filter)
                 refresh_colors();
+            else
+                refresh_effects();
         }
         for (int child = section.first; child <= section.last; ++child)
             ShowWindow(control(child), show ? SW_SHOWNOACTIVATE : SW_HIDE);
@@ -606,6 +841,12 @@ private:
                 essential_[index] = position;
                 slider_dirty_ = true;
             }
+        } else if (is_effect_control(*id)) {
+            const auto &row = effect_row(*id);
+            if (change_effect_value(row, position)) {
+                apply_effect_settings(player_, row.effect, effect_settings_);
+                slider_dirty_ = true;
+            }
         } else if (IsWindowEnabled(control(*id))) {
             slider_dirty_ |= change_color_value(color_row(*id), position);
         }
@@ -620,6 +861,12 @@ private:
     }
 
     void move_slider(Control id, WORD event) {
+        if (is_effect_control(id)) {
+            auto label = box(id, bounds().right);
+            label.bottom = label.top;
+            label.top -= 33;
+            InvalidateRect(window_, &label, FALSE);
+        }
         if (pending_slider_ && *pending_slider_ != id)
             apply_slider();
         if (event == TB_THUMBTRACK) {
@@ -651,6 +898,51 @@ private:
                 text(dc, row.label, {left, box.top, label_end, box.bottom}, regular_, colors_.dim);
             } else if (row.type == ColorControl::slider) {
                 text(dc, row.label, {left, box.top - 33, right, box.top - 7}, regular_, colors_.dim);
+            }
+        }
+    }
+
+    void draw_effects(HDC dc, LONG width, const FilterSection &section) const {
+        const auto header = box(section.header, width);
+        const LONG left = header.left + detail_inset, right = header.right - detail_inset;
+        const auto divider = [&](int offset) {
+            const LONG y = header.top + offset;
+            fill(dc, {header.left, y, header.right, y + 1}, colors_.edge);
+        };
+        if (section.header == geometry_filter) {
+            text(dc, L"Drag the preview box on the video to pan.",
+                 {left, header.top + 90, right, header.top + 119}, regular_, colors_.dim);
+            divider(127);
+        } else if (section.header == overlay_filter) {
+            divider(261);
+        } else {
+            divider(305);
+            divider(520);
+        }
+
+        for (int id = section.first; id <= section.last; ++id) {
+            const auto &row = effect_row(id);
+            const auto field = effect_box(row, width);
+            if (row.type == EffectControl::number || row.type == EffectControl::text)
+                round_rect(dc, field, 6, detail_colors_.track);
+            if (row.type == EffectControl::slider) {
+                const RECT label{left, field.top - 33, right, field.top - 7};
+                const int value = SendMessageW(control(id), TBM_GETPOS, 0, 0);
+                const auto units = row.id == flicker_window ? L" frames" : L"";
+                const auto readout = row.id == logo_opacity
+                    ? number_text(value * 100.0 / 255, 0, L"%") : number_text(value, 0, units);
+                text(dc, row.label, label, regular_, colors_.dim);
+                text(dc, readout.c_str(), label, regular_, colors_.text, DT_RIGHT);
+            } else if (row.type == EffectControl::browse) {
+                const std::string_view files = effect_settings_.logo;
+                const auto first = files.substr(0, files.find_first_of(",;"));
+                const auto slash = first.find_last_of("\\/");
+                const auto filename = wstring(first.substr(slash == std::string_view::npos ? 0 : slash + 1));
+                const auto label = !logo_error_.empty() ? logo_error_.c_str() :
+                                   filename.empty() ? L"No image selected" : filename.c_str();
+                text(dc, label, {left, field.top, field.left - 8, field.bottom}, regular_, colors_.text);
+            } else if (row.type != EffectControl::text) {
+                text(dc, row.label, {left, field.top, field.left - 8, field.bottom}, regular_, colors_.dim);
             }
         }
     }
@@ -707,6 +999,10 @@ private:
         }
         if (expanded(colors_filter))
             draw_colors(dc, area.right);
+        for (const auto &section : sections) {
+            if (section.header >= geometry_filter && expanded(section.header))
+                draw_effects(dc, area.right, section);
+        }
         divider(top + preset_divider + extra_height_before(default_preset));
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
@@ -743,6 +1039,17 @@ private:
             draw_toggle(dc, box, color_toggle_on(color_row(id)), detail_colors_, small_);
             return;
         }
+        if (effect_type(id, EffectControl::toggle)) {
+            fill(dc, box, detail_colors_.panel);
+            draw_toggle(dc, box, effect_settings_.enabled(effect_row(id).effect), detail_colors_, small_);
+            return;
+        }
+        if (id == logo_browse) {
+            fill(dc, box, detail_colors_.panel);
+            round_rect(dc, box, 6, pressed ? colors_.hover : detail_colors_.track);
+            text(dc, effect_row(id).label, box, regular_, colors_.text, DT_CENTER);
+            return;
+        }
         if (color_type(id, ColorControl::swatch)) {
             fill(dc, box, detail_colors_.track);
             round_rect(dc, box, 3, colors_.knob);
@@ -753,9 +1060,10 @@ private:
         const bool flip = item.CtlID <= vertical;
         const bool selected_flip = flip && static_cast<int>(transform_.flip) == static_cast<int>(item.CtlID) - no_flip;
         const auto label = window_text(item.hwndItem);
-        fill(dc, box, id == gradient_mode ? detail_colors_.panel : colors_.panel);
+        const auto &palette = id == gradient_mode || is_effect_control(id) ? detail_colors_ : colors_;
+        fill(dc, box, palette.panel);
         const bool open = expanded(id);
-        round_rect(dc, box, 6, open ? detail_colors_.panel : id == gradient_mode ? detail_colors_.track : colors_.track);
+        round_rect(dc, box, 6, open ? detail_colors_.panel : palette.track);
         if (open)
             fill(dc, {box.left, box.top + 6, box.right, box.bottom}, detail_colors_.panel);
         if (id >= first_filter && id <= default_preset) {
@@ -852,6 +1160,11 @@ private:
             for (const auto &mode : gradient_modes)
                 labels.emplace_back(mode.label);
             populate_dropdown(labels, color_settings_.value(ColorValue::gradient_mode));
+        } else if (effect_type(id, EffectControl::dropdown)) {
+            std::vector<std::wstring> labels;
+            for (const auto &choice : effect_choices(id))
+                labels.emplace_back(choice.label);
+            populate_dropdown(labels, effect_selection(id));
         } else {
             std::vector<std::wstring> labels;
             for (const auto &choice : choices(field(id)))
@@ -869,7 +1182,19 @@ private:
         close_dropdown(true);
         if (id == gradient_mode)
             set_color_value(color_row(id), index);
-        else
+        else if (effect_type(id, EffectControl::dropdown)) {
+            const auto &row = effect_row(id);
+            if (index != effect_selection(id)) {
+                const auto value = effect_choices(id).begin()[index].value;
+                if (id == mirror_direction) {
+                    effect_settings_.value(EffectValue::mirror_split) = value / 2;
+                    effect_settings_.value(EffectValue::mirror_direction) = value % 2;
+                } else {
+                    change_effect_value(row, value);
+                }
+                save_effect(row.effect);
+            }
+        } else
             save_failed_ = !(id == render ? video_renderers::select(player_, output) : set_choice(player_, field(id), index));
         refresh();
     }
@@ -926,6 +1251,21 @@ private:
         } else if (color_type(id, ColorControl::hex)) {
             if (const auto rgb = parse_color(value))
                 set_rgb(color_row(id), *rgb);
+        } else if (id == overlay_text) {
+            auto text = utf8(value.c_str());
+            std::replace_if(text.begin(), text.end(), [](char ch) { return ch == '\n' || ch == '\r'; }, ' ');
+            if (text != effect_settings_.text) {
+                effect_settings_.text = std::move(text);
+                save_effect(VideoEffect::text_overlay);
+            }
+        } else if (effect_type(id, EffectControl::number)) {
+            const auto &row = effect_row(id);
+            const auto &option = effect_option(row.value);
+            const bool auto_size = id == text_size && _wcsicmp(std::wstring(trim(value)).c_str(), L"Auto") == 0;
+            const auto number = auto_size ? std::optional<double>(0) : parse_number(value, id == text_size ? L" px" : L"");
+            if (number && *number >= option.minimum && *number <= option.maximum &&
+                (option.real || *number == std::floor(*number)) && change_effect_value(row, *number))
+                save_effect(row.effect);
         } else if (const auto pixels = parse_number(value, L" px");
                    pixels && *pixels >= 0 && *pixels <= max_crop_margin && std::floor(*pixels) == *pixels) {
             const int edge = id - first_crop_edge;
@@ -959,7 +1299,8 @@ private:
                 save_failed_ = !set_transform(player_, transform_);
                 refresh();
             }
-        } else if (event == BN_CLICKED && ((id >= zoom && id <= render) || id == gradient_mode)) {
+        } else if (event == BN_CLICKED && ((id >= zoom && id <= render) || id == gradient_mode ||
+                                           effect_type(id, EffectControl::dropdown))) {
             open_dropdown(id);
         } else if (event == BN_CLICKED && expandable(id)) {
             toggle_section(id);
@@ -971,6 +1312,10 @@ private:
             choose_color(color_row(id));
         } else if (event == BN_CLICKED && color_type(id, ColorControl::toggle) && IsWindowEnabled(control(id))) {
             toggle_color(color_row(id));
+        } else if (event == BN_CLICKED && effect_type(id, EffectControl::toggle)) {
+            toggle_effect(effect_row(id));
+        } else if (event == BN_CLICKED && id == logo_browse) {
+            pick_logo(false);
         }
     }
 
@@ -994,11 +1339,15 @@ private:
         case WM_MOUSEWHEEL: wheel(GET_WHEEL_DELTA_WPARAM(wp)); return 0;
         case WM_LBUTTONDOWN: {
             const POINT pointer{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-            if (expanded(crop_filter)) {
-                const LONG width = bounds().right;
-                for (int id = crop_top; id <= crop_right; ++id) {
-                    const auto box = crop_box(static_cast<Control>(id), width);
-                    if (PtInRect(&box, pointer)) {
+            const LONG width = bounds().right;
+            for (const auto &section : sections) {
+                if (!expanded(section.header))
+                    continue;
+                for (int id = section.first; id <= section.last; ++id) {
+                    if (!is_crop_edge(id) && !(is_effect_control(id) && is_edit(id)))
+                        continue;
+                    const auto area = box(static_cast<Control>(id), width);
+                    if (PtInRect(&area, pointer)) {
                         SetFocus(control(id));
                         return 0;
                     }
@@ -1054,8 +1403,7 @@ private:
             auto background = colors_.track;
             if (message == WM_CTLCOLORLISTBOX)
                 background = colors_.button;
-            else if (const auto id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
-                     is_crop_edge(id) || color_type(id, ColorControl::hex))
+            else if (detail_section(GetDlgCtrlID(reinterpret_cast<HWND>(lp))))
                 background = detail_colors_.track;
             SetTextColor(dc, colors_.text);
             SetBkColor(dc, background);

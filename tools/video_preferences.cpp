@@ -53,6 +53,7 @@ namespace video_preferences {
 namespace {
 
 constexpr char filter_key[] = "video-filter";
+constexpr char overlay_key[] = "sub-source";
 constexpr char crop_key[] = "crop";
 constexpr CropEdge crop_order[] = {left_edge, top_edge, right_edge, bottom_edge};
 
@@ -78,6 +79,40 @@ constexpr ColorOption color_options[] = {
     {ColorEffect::sepia, "sepia-intensity", "intensity", 0, sepia_limit},
 };
 static_assert(std::size(color_options) == static_cast<int>(ColorValue::count));
+
+struct EffectModule {
+    const char *name;
+    const char *chain = filter_key;
+    const char *text_key = nullptr;
+    const char *text_option = nullptr;
+};
+constexpr EffectModule effect_modules[] = {
+    {"magnify"},
+    {"mirror"},
+    {"marq", overlay_key, "marq-marquee", "marquee"},
+    {"logo", overlay_key, "logo-file", "file"},
+    {"hqdn3d"},
+    {"antiflicker"},
+    {"motionblur"},
+};
+static_assert(std::size(effect_modules) == static_cast<int>(VideoEffect::count));
+
+constexpr EffectOption effect_options[] = {
+    {VideoEffect::mirror, "mirror-split", "split", 0, 1},
+    {VideoEffect::mirror, "mirror-direction", "direction", 0, 1},
+    {VideoEffect::text_overlay, "marq-position", "position", -1, 10},
+    {VideoEffect::text_overlay, "marq-size", "size", 0, 4096},
+    {VideoEffect::logo_overlay, "logo-position", "position", -1, 10},
+    {VideoEffect::logo_overlay, "logo-opacity", "opacity", 0, 255},
+    {VideoEffect::denoiser, "hqdn3d-luma-spat", "luma-spat", 0, 254, true},
+    {VideoEffect::denoiser, "hqdn3d-chroma-spat", "chroma-spat", 0, 254, true},
+    {VideoEffect::denoiser, "hqdn3d-luma-temp", "luma-temp", 0, 254, true},
+    {VideoEffect::denoiser, "hqdn3d-chroma-temp", "chroma-temp", 0, 254, true},
+    {VideoEffect::antiflicker, "antiflicker-window-size", "window-size", 0, 100},
+    {VideoEffect::antiflicker, "antiflicker-softening-size", "softening-size", 0, 31},
+    {VideoEffect::motion_blur, "blur-factor", "factor", 1, 127},
+};
+static_assert(std::size(effect_options) == static_cast<int>(EffectValue::count));
 
 enum class Type { text, real, integer };
 struct Setting {
@@ -179,6 +214,46 @@ int color_option_value(VlcPlayer player, const ColorOption &option, const Config
     return static_cast<int>(std::clamp<std::int64_t>(value, option.minimum, option.maximum));
 }
 
+double effect_parameter(VlcPlayer player, const EffectOption &option, const ConfigOption *inline_options = nullptr) {
+    double value = option.real ? static_cast<double>(config_GetFloat(player.vlc, option.key)) :
+                                static_cast<double>(config_GetInt(player.vlc, option.key));
+    if (const auto text = option_value(inline_options, option.name)) {
+        if (option.real) {
+            double parsed = 0;
+            const auto end = text + std::char_traits<char>::length(text);
+            const auto result = std::from_chars(text, end, parsed);
+            if (result.ec == std::errc{} && result.ptr == end)
+                value = parsed;
+        } else {
+            char *end = nullptr;
+            const auto parsed = std::strtoll(text, &end, 0);
+            if (end != text && *end == '\0')
+                value = static_cast<double>(parsed);
+        }
+    }
+    return std::clamp(std::isfinite(value) ? value : double(option.minimum),
+                      double(option.minimum), double(option.maximum));
+}
+
+void append_option(std::string &options, std::string_view name, const char *value) {
+    if (!options.empty())
+        options += ',';
+    options += name;
+    if (value) {
+        options += "='";
+        options += vlc_config::take_string(config_StringEscape(value));
+        options += '\'';
+    }
+}
+
+std::string numeric_option(const EffectOption &option, double value) {
+    if (!option.real)
+        return std::to_string(static_cast<int>(value));
+    char text[64];
+    const auto result = std::to_chars(std::begin(text), std::end(text), static_cast<float>(value));
+    return {text, result.ptr};
+}
+
 const char *module_name(Effect effect) {
     constexpr const char *names[] = {"adjust", "sharpen", "gradfun", "grain"};
     return names[static_cast<int>(effect)];
@@ -255,17 +330,17 @@ std::string essential_clause(VlcPlayer player, const EssentialSlider &slider, in
 
 // Keep every unrelated filter and the order of the chain, including native VLC filters with inline options.
 template<class Replace>
-void update_filter_chain(VlcPlayer player, Replace replace) {
-    const auto configured = replace(read_string(player, filter_key));
-    config_PutPsz(player.vlc, filter_key, configured.c_str());
+void update_filter_chain(VlcPlayer player, Replace replace, const char *key = filter_key) {
+    const auto configured = replace(read_string(player, key));
+    config_PutPsz(player.vlc, key, configured.c_str());
     apply_live(player, [&](void *object) {
         VlcValue data{};
-        if (var_Get(object, filter_key, &data) == 0) {
+        if (var_Get(object, key, &data) == 0) {
             const auto previous = vlc_config::take_string(data.string);
             auto next = replace(previous);
             if (next != previous) {
                 data.string = next.data();
-                var_Set(object, filter_key, data);
+                var_Set(object, key, data);
             }
         }
     });
@@ -519,6 +594,95 @@ void apply_color_settings(VlcPlayer player, ColorEffect effect, const ColorSetti
             vlc_config::append_filter(next, clause);
         return next;
     });
+}
+
+const EffectOption &effect_option(EffectValue id) {
+    return effect_options[static_cast<int>(id)];
+}
+
+EffectSettings effect_settings(VlcPlayer player) {
+    EffectSettings result;
+    for (std::size_t i = 0; i < std::size(effect_options); ++i)
+        result.values[i] = effect_parameter(player, effect_options[i]);
+    result.text = read_string(player, effect_modules[static_cast<int>(VideoEffect::text_overlay)].text_key);
+    result.logo = read_string(player, effect_modules[static_cast<int>(VideoEffect::logo_overlay)].text_key);
+
+    for (const auto chain : {filter_key, overlay_key}) {
+        vlc_config::for_each_filter(read_string(player, chain), [&](auto name, auto filter) {
+            const auto module = std::find_if(std::begin(effect_modules), std::end(effect_modules),
+                [&](const EffectModule &candidate) { return name == candidate.name && chain == candidate.chain; });
+            if (module == std::end(effect_modules))
+                return;
+            const auto effect = static_cast<VideoEffect>(module - std::begin(effect_modules));
+            if (result.enabled(effect))
+                return;
+            result.enabled(effect) = true;
+            const auto options = filter_options(filter);
+            for (std::size_t i = 0; i < std::size(effect_options); ++i) {
+                if (effect_options[i].effect == effect)
+                    result.values[i] = effect_parameter(player, effect_options[i], options.get());
+            }
+            if (module->text_option) {
+                if (const auto text = option_value(options.get(), module->text_option))
+                    (effect == VideoEffect::text_overlay ? result.text : result.logo) = text;
+            }
+        });
+    }
+    return result;
+}
+
+void apply_effect_settings(VlcPlayer player, VideoEffect effect, const EffectSettings &settings) {
+    const auto &module = effect_modules[static_cast<int>(effect)];
+    std::string options;
+    if (module.text_key) {
+        const auto &text = effect == VideoEffect::text_overlay ? settings.text : settings.logo;
+        config_PutPsz(player.vlc, module.text_key, text.c_str());
+        append_option(options, module.text_option, text.c_str());
+    }
+    for (std::size_t i = 0; i < std::size(effect_options); ++i) {
+        const auto &option = effect_options[i];
+        if (option.effect != effect)
+            continue;
+        const auto value = settings.values[i];
+        if (option.real)
+            config_PutFloat(player.vlc, option.key, static_cast<float>(value));
+        else
+            config_PutInt(player.vlc, option.key, static_cast<int>(value));
+        append_option(options, option.name, numeric_option(option, value).c_str());
+    }
+
+    const bool enabled = settings.enabled(effect);
+    const auto clause = [&](std::string_view old) {
+        auto combined = options;
+        // Keep inline options from VLC's native preferences that the sidebar does not expose.
+        const auto original = filter_options(old);
+        for (auto item = original.get(); item; item = item->next) {
+            const std::string_view name = item->name;
+            const bool managed = (module.text_option && name == module.text_option) ||
+                std::any_of(std::begin(effect_options), std::end(effect_options), [&](const auto &option) {
+                    return option.effect == effect && name == option.name;
+                });
+            if (!managed)
+                append_option(combined, item->name, item->value);
+        }
+        return combined.empty() ? std::string(module.name) : std::string(module.name) + '{' + combined + '}';
+    };
+    update_filter_chain(player, [&](std::string_view previous) {
+        std::string next;
+        bool found = false;
+        vlc_config::for_each_filter(previous, [&](auto name, auto filter) {
+            if (name == module.name) {
+                if (enabled)
+                    vlc_config::append_filter(next, found ? std::string(filter) : clause(filter));
+                found = true;
+            } else {
+                vlc_config::append_filter(next, filter);
+            }
+        });
+        if (enabled && !found)
+            vlc_config::append_filter(next, clause({}));
+        return next;
+    }, module.chain);
 }
 
 EssentialPositions essential_positions(VlcPlayer player) {
