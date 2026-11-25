@@ -591,12 +591,6 @@ def preferences_sidebar(L, art, *, windowed):
                 frame), left, bottom - radius, anchor="bl")
     L.image(art.px("divider"), left, PREFERENCES_HEADER, body_width, 1, resize="scale")
 
-    def draw_tab(color):
-        return P.text(P.blank(tab_width, tab_height), tab_width // 2, baseline,
-                      "Tab", font_size, t[color], align="center")
-
-    tabs = art.states("preferences.tab", draw_tab, tuple((color,) for color in tab_colors), frame)
-
     def labelled_tab(label, icon, *, highlighted=False):
         icon_slot = 24 + 8
         icon_x = (tab_width - icon_slot - P.text_width(label, font_size)) // 2
@@ -604,21 +598,18 @@ def preferences_sidebar(L, art, *, windowed):
                                    icon_x, 20, icon_x + icon_slot, baseline, font_size, frame,
                                    colors=tab_colors, original_colors=highlighted)
 
-    labelled_tabs = {
-        1: ("Subtitles", "subtitles", "subtitles_outline_active"),
-        2: ("Audio", "audio", "audio_two_tone"),
-        3: ("Video", "video", "video_active"),
-    }
-    for number in range(1, PREFERENCES_TABS + 1):
+    labelled_tabs = (
+        ("Subtitles", "subtitles", "subtitles_outline_active"),
+        ("Audio", "audio", "audio_two_tone"),
+        ("Video", "video", "video_active"),
+        ("Playback", "playback_tab", "playback_tab_active"),
+    )
+    for number, (label, icon, active_icon) in enumerate(labelled_tabs, 1):
         x = left + (PREFERENCES_TABS - number) * tab_width
         page = lid(t, f"preferences{number}")
         action, selected = f"preferenceswin.setLayout({page})", f"{page}.isActive"
-        if number in labelled_tabs:
-            label, icon, active_icon = labelled_tabs[number]
-            L.toggle(selected, labelled_tab(label, icon), labelled_tab(label, active_icon, highlighted=True),
-                     action, action, label, label, x=x, y=PREFERENCES_TAB_TOP, hint="preferencesTab")
-        else:
-            L.button(tabs, x, PREFERENCES_TAB_TOP, action, f"Tab {number}", hint="preferencesTab")
+        L.toggle(selected, labelled_tab(label, icon), labelled_tab(label, active_icon, highlighted=True),
+                 action, action, label, label, x=x, y=PREFERENCES_TAB_TOP, hint="preferencesTab")
         L.image(art.px("accent"), x + 4, PREFERENCES_HEADER - 2, tab_width - 8, 2, resize="scale",
                 visible=selected, hint="preferencesUnderline")
 

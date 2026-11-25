@@ -13,6 +13,7 @@
 
 #include "audio_preferences_view.hpp"
 #include "context_menu_assets.hpp"
+#include "playback_preferences_view.hpp"
 #include "player_window.hpp"
 #include "preferences_layout.hpp"
 #include "subtitle_preferences_view.hpp"
@@ -41,6 +42,8 @@ constexpr Page pages[] = {
      audio_preferences_view::handle_input, nullptr},
     {video_preferences_view::create, video_preferences_view::set_visible,
      video_preferences_view::handle_input, video_preferences_view::modal_open},
+    {playback_preferences_view::create, playback_preferences_view::set_visible,
+     playback_preferences_view::handle_input, nullptr},
 };
 
 struct Sidebar {

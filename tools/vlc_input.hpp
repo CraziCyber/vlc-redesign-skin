@@ -47,6 +47,7 @@ __declspec(dllimport) Input *playlist_CurrentInput(Playlist *);
 __declspec(dllimport) AudioOutput *playlist_GetAout(Playlist *);
 __declspec(dllimport) InputItem *input_GetItem(Input *);
 __declspec(dllimport) int input_Control(Input *, int, ...);
+__declspec(dllimport) void *vlc_object_hold(void *);
 __declspec(dllimport) void vlc_object_release(void *);
 __declspec(dllimport) int var_Create(void *, const char *, int);
 __declspec(dllimport) int var_Type(void *, const char *);

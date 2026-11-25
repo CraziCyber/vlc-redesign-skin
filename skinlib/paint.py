@@ -194,6 +194,7 @@ ICONS = {
     "subtitles_outline_active": (196, 64),
     "subtitles_active": (240, 64), "audio": (284, 64), "audio_two_tone": (328, 64), "audio_active": (372, 64),
     "play": (416, 64), "media": (460, 64), "pause": (108, 108), "next": (152, 108),
+    "playback_tab": (460, 64), "playback_tab_active": (504, 64),
     "stop": (240, 108), "previous": (328, 108), "fwd10": (416, 108), "back10": (504, 108),
     "volume": (284, 152), "volume_medium": (328, 152), "volume_low": (372, 152),
     "mute": (416, 152), "close": (504, 152), "minimize": (20, 196), "maximize": (64, 196),

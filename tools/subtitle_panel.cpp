@@ -25,9 +25,11 @@
 #include "add_subtitles.hpp"
 #include "context_menu.hpp"
 #include "hidden_controls.hpp"
+#include "playback_preferences.hpp"
 #include "player_window.hpp"
 #include "preferences_sidebar.hpp"
 #include "subtitle_drop.hpp"
+#include "subtitle_timeline.hpp"
 #include "video_preferences.hpp"
 #include "vlc_input.hpp"
 #include "track_defaults.hpp"
@@ -1280,6 +1282,10 @@ LRESULT CALLBACK skin_events_from_queue(int code, WPARAM removal, LPARAM data) {
             const auto interface = context_interface.load();
             if (interface && redesign_is_selected(interface->libvlc) && subtitle_drop_window(message.hwnd))
                 subtitle_drop::install(message.hwnd, can_drop_subtitles, queue_dropped_subtitles);
+        } else if (message.message == subtitle_timeline::update_message()) {
+            const bool toolbar = fullscreen_owner(message.hwnd) != nullptr;
+            subtitle_timeline::update_window(message.hwnd, toolbar || context_player(message.hwnd), toolbar);
+            message.message = WM_NULL;
         } else if (preferences_sidebar::owns_input_target(message.hwnd)) {
             if (preferences_sidebar::handle_message(message))
                 message.message = WM_NULL;
@@ -1427,6 +1433,8 @@ private:
         context_target.store(nullptr);
         for (const auto &hook : video_hooks_)
             UnhookWindowsHookEx(hook.second);
+        subtitle_timeline::release();
+        playback_preferences::release();
         context_menu::unload_artwork();
         if (host_)
             DestroyWindow(host_);
@@ -1461,11 +1469,18 @@ private:
         return skin_hook_ != nullptr;
     }
 
-    void watch_video_windows() {
+    void watch_video_windows(bool refresh_timeline) {
         HWND window = nullptr;
         if (skin_thread_)
             EnumThreadWindows(skin_thread_, find_context_player, reinterpret_cast<LPARAM>(&window));
         context_target.store(window);
+        if (skin_thread_ && refresh_timeline) {
+            EnumThreadWindows(skin_thread_, [](HWND window, LPARAM message) -> BOOL {
+                if (is_skin_window(window))
+                    PostMessageW(window, static_cast<UINT>(message), 0, 0);
+                return TRUE;
+            }, subtitle_timeline::update_message());
+        }
         struct Threads {
             DWORD process, skin_thread;
             std::vector<DWORD> ids;
@@ -1563,15 +1578,31 @@ private:
     }
 
     void refresh() {
-        if (const auto interface = context_interface.load()) {
-            const subtitle_preferences::Player player{interface->libvlc, interface->parent};
+        const auto interface = context_interface.load();
+        const VlcPlayer player = interface ? VlcPlayer{interface->libvlc, interface->parent} : VlcPlayer{};
+        const bool redesign = interface && redesign_is_selected(player.vlc);
+        if (interface) {
             subtitle_preferences::reset_duration_on_media_change(player);
-            if (redesign_is_selected(player.vlc)) {
+            if (redesign) {
                 subtitle_defaults_.refresh(player, metadata_library_);
                 audio_defaults_.refresh(player, metadata_library_);
             }
         }
         refresh_local_subtitle();
+        bool refresh_timeline = false;
+        if (redesign) {
+            const InputRef input(playlist_CurrentInput(player.playlist), vlc_object_release);
+            playback_preferences::refresh(player, input.get(), metadata_library_);
+            std::string_view loaded;
+            VlcValue selected{};
+            if (input && input.get() == local_input_.get() && var_Get(input.get(), "spu-es", &selected) == 0) {
+                const auto match = std::find_if(loaded_local_subtitles_.begin(), loaded_local_subtitles_.end(),
+                    [&](const auto &entry) { return entry.track.id == selected.integer; });
+                if (match != loaded_local_subtitles_.end())
+                    loaded = match->file->uri;
+            }
+            refresh_timeline = subtitle_timeline::refresh(player, input.get(), metadata_library_, loaded);
+        }
         PanelWindow window;
         EnumWindows(find_panel, reinterpret_cast<LPARAM>(&window));
         if (window.hwnd)
@@ -1582,7 +1613,7 @@ private:
             if (toolbar)
                 watch_skin_thread(toolbar);
         }
-        watch_video_windows();
+        watch_video_windows(refresh_timeline);
         update_track_panel(window);
     }
 
@@ -2157,15 +2188,17 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
         set(data, module, close_callback, "close_panel", reinterpret_cast<void *>(close_panel)))
         return -1;
     constexpr int config_string = 0x80;
-    const auto add_preset = [&](const char *key, const char *label, const char *help) {
+    const auto add_preference = [&](const char *key, const char *label, const char *help) {
         void *config;
         return !set(data, nullptr, create_config, config_string, &config) &&
                !set(data, config, config_name, key) &&
                !set(data, config, config_value, "") &&
                !set(data, config, config_description, label, help);
     };
-    if (!add_preset(track_defaults::subtitle_key, "Subtitle defaults preset", "Preferred subtitle track number and language.") ||
-        !add_preset(track_defaults::audio_key, "Audio defaults preset", "Preferred audio track number and language."))
+    if (!add_preference(track_defaults::subtitle_key, "Subtitle defaults preset", "Preferred subtitle track number and language.") ||
+        !add_preference(track_defaults::audio_key, "Audio defaults preset", "Preferred audio track number and language.") ||
+        !add_preference(playback_preferences::timeline_key, "Subtitle timeline", "Show subtitle cue timing on the seekbar.") ||
+        !add_preference(playback_preferences::statistics_key, "Playback statistics", "Display live video and audio statistics."))
         return -1;
     const char *const shortcuts[] = {subtitle_preferences::text_style_filter};
     if (set(data, nullptr, create_module, &module) ||

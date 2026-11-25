@@ -1,4 +1,4 @@
-"""Build a portable VLC 3.0.24 test player with live Video, Audio and Subtitles tabs."""
+"""Build a portable VLC 3.0.24 test player with the redesigned preferences sidebar."""
 import argparse
 import ctypes
 import os
@@ -21,7 +21,7 @@ from skinlib.context_menu import write_resources  # noqa: E402
 from skinlib.paint import FIGMA  # noqa: E402
 
 MODULE = "libsubtitlepanel_plugin.dll"
-CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vlc_object_release",
+CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vlc_object_hold", "vlc_object_release",
                 "var_Create", "var_Destroy", "var_Get", "var_Set",
                 "var_Change", "var_FreeList", "var_Inherit", "var_Type", "input_GetItem", "input_item_GetURI", "input_item_GetTitleFbName",
                 "input_item_GetMeta", "vlc_uri2path",
@@ -35,6 +35,9 @@ CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vl
                 "config_GetInt", "config_PutInt", "config_GetFloat", "config_PutFloat",
                 "config_SaveConfigFile", "demux_vaControl", "module_get_object", "text_style_Delete",
                 "vlc_list_children", "vlc_list_release", "GetLang_1",
+                "vout_RegisterSubpictureChannel", "vout_FlushSubpictureChannel", "vout_OSDText",
+                "vlc_stream_NewURL", "vlc_stream_Delete", "demux_New", "demux_Delete",
+                "vlc_interrupt_create", "vlc_interrupt_destroy", "vlc_interrupt_set", "vlc_interrupt_kill",
                 "GetLang_2T", "GetLang_2B",
                 "vlc_actions_get_id", "vlc_actions_get_key_names", "vlc_actions_get_keycodes",
                 "vlc_keycode2str", "vlc_str2keycode")
@@ -42,6 +45,7 @@ LIBVLC_EXPORTS = ("libvlc_new", "libvlc_release", "libvlc_free", "libvlc_media_n
                   "libvlc_media_release", "libvlc_media_parse_with_options",
                   "libvlc_media_get_parsed_status", "libvlc_media_parse_stop",
                   "libvlc_media_tracks_get", "libvlc_media_tracks_release", "libvlc_media_new_from_input_item",
+                  "libvlc_media_get_stats", "libvlc_media_slaves_get", "libvlc_media_slaves_release",
                   "libvlc_audio_equalizer_new_from_preset", "libvlc_audio_equalizer_release",
                   "libvlc_audio_equalizer_get_preamp", "libvlc_audio_equalizer_get_band_count",
                   "libvlc_audio_equalizer_get_amp_at_index", "libvlc_media_new_callbacks",
@@ -137,6 +141,8 @@ def build_module(output, toolchain):
                         ROOT / "tools/audio_preferences_view.cpp", ROOT / "tools/stereo_test.cpp",
                         ROOT / "tools/video_preferences.cpp", ROOT / "tools/video_preferences_view.cpp",
                         ROOT / "tools/video_renderers.cpp",
+                        ROOT / "tools/playback_preferences.cpp", ROOT / "tools/playback_preferences_view.cpp",
+                        ROOT / "tools/subtitle_timeline.cpp",
                         ROOT / "tools/subtitle_style_filter.cpp", ROOT / "tools/subtitle_speed_filter.cpp",
                         ROOT / "tools/opensubtitles.cpp", resources,
                         ROOT / "tools/subtitle_folder.cpp", ROOT / "tools/local_subtitles.cpp", ROOT / "tools/subtitle_drop.cpp",
