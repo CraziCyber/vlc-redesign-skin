@@ -2,10 +2,13 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <cwchar>
 #include <iterator>
@@ -86,6 +89,38 @@ inline std::wstring_view trim(std::wstring_view text) {
     if (start == std::wstring_view::npos)
         return {};
     return text.substr(start, text.find_last_not_of(L" \t") - start + 1);
+}
+
+inline COLORREF colorref(std::uint32_t rgb) {
+    return RGB((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+}
+
+inline std::wstring hex_text(std::uint32_t color) {
+    wchar_t text[8];
+    std::swprintf(text, std::size(text), L"#%06X", static_cast<unsigned>(color & 0xffffff));
+    return text;
+}
+
+inline std::optional<std::uint32_t> parse_color(std::wstring_view text) {
+    text = trim(text);
+    if (!text.empty() && text.front() == L'#')
+        text.remove_prefix(1);
+    if (text.size() != 6 || text.find_first_not_of(L"0123456789abcdefABCDEF") != std::wstring_view::npos)
+        return std::nullopt;
+    return static_cast<std::uint32_t>(std::wcstoul(std::wstring(text).c_str(), nullptr, 16));
+}
+
+inline std::optional<std::uint32_t> choose_rgb(HWND owner, std::array<COLORREF, 16> &custom_colors, std::uint32_t rgb) {
+    CHOOSECOLORW choice{};
+    choice.lStructSize = sizeof(choice);
+    choice.hwndOwner = owner;
+    choice.lpCustColors = custom_colors.data();
+    choice.rgbResult = colorref(rgb);
+    choice.Flags = CC_RGBINIT | CC_FULLOPEN;
+    if (!ChooseColorW(&choice))
+        return std::nullopt;
+    const auto value = choice.rgbResult;
+    return (GetRValue(value) << 16) | (GetGValue(value) << 8) | GetBValue(value);
 }
 
 inline std::optional<double> parse_number(std::wstring text, std::wstring_view suffix) {
@@ -200,7 +235,8 @@ struct SliderTicks {
 };
 
 inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool centered,
-                           COLORREF thumb_color = RGB(211,121,24), SliderTicks ticks = {}) {
+                           COLORREF thumb_color = RGB(211,121,24), SliderTicks ticks = {},
+                           std::optional<COLORREF> disabled_fill = std::nullopt) {
     if (drawing.dwDrawStage == CDDS_PREPAINT) {
         fill(drawing.hdc, drawing.rc, colors.panel);
         return CDRF_NOTIFYITEMDRAW;
@@ -221,8 +257,9 @@ inline LRESULT draw_slider(NMCUSTOMDRAW &drawing, const Colors &colors, bool cen
     if (drawing.dwItemSpec == TBCD_CHANNEL) {
         round_rect(drawing.hdc, {channel.left, y - 8, channel.right, y + 8}, 7, colors.track);
         const LONG origin = centered ? (channel.left + channel.right) / 2 : channel.left;
-        if (enabled && origin != x)
-            round_rect(drawing.hdc, {std::min(origin, x), y - 6, std::max(origin, x), y + 6}, 3, colors.fill);
+        if ((enabled || disabled_fill) && origin != x)
+            round_rect(drawing.hdc, {std::min(origin, x), y - 6, std::max(origin, x), y + 6}, 3,
+                       enabled ? colors.fill : *disabled_fill);
         for (int i = 1; i < ticks.divisions; ++i) {
             const LONG tick = channel.left + (channel.right - channel.left) * i / ticks.divisions;
             const bool filled = enabled && tick > std::min(origin, x) && tick < std::max(origin, x);

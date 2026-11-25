@@ -52,25 +52,6 @@ constexpr Slider sliders[] = {
     {duration_slider, duration, Timing::duration, sync_y + 323, 0, 20000, 200},
 };
 
-COLORREF colorref(std::uint32_t rgb) {
-    return RGB((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
-}
-
-std::wstring hex_text(std::uint32_t color) {
-    wchar_t text[8];
-    std::swprintf(text, std::size(text), L"#%06X", static_cast<unsigned>(color & 0xffffff));
-    return text;
-}
-
-std::optional<std::uint32_t> parse_color(std::wstring_view text) {
-    text = trim(text);
-    if (!text.empty() && text.front() == L'#')
-        text.remove_prefix(1);
-    if (text.size() != 6 || text.find_first_not_of(L"0123456789abcdefABCDEF") != std::wstring_view::npos)
-        return std::nullopt;
-    return static_cast<std::uint32_t>(std::wcstoul(std::wstring(text).c_str(), nullptr, 16));
-}
-
 bool is_edit(Control id) {
     return id == default_track || id == default_language || id == delay || id == speed || id == duration ||
            id == text_color || id == outline_color || id == offset || id == font_size || id == thickness || id == opacity;
@@ -529,19 +510,12 @@ private:
     }
 
     void choose_color(Control id) {
-        CHOOSECOLORW choice{};
-        choice.lStructSize = sizeof(choice);
-        choice.hwndOwner = GetAncestor(window_, GA_ROOT);
-        choice.lpCustColors = custom_colors_.data();
-        choice.rgbResult = colorref(id == text_color ? style_.color : style_.outline_color);
-        choice.Flags = CC_RGBINIT | CC_FULLOPEN;
         modal_ = true;
-        const bool accepted = ChooseColorW(&choice);
+        const auto color = choose_rgb(GetAncestor(window_, GA_ROOT), custom_colors_,
+                                      id == text_color ? style_.color : style_.outline_color);
         modal_ = false;
-        if (accepted) {
-            const auto value = choice.rgbResult;
-            set_color(id, (GetRValue(value) << 16) | (GetGValue(value) << 8) | GetBValue(value));
-        }
+        if (color)
+            set_color(id, *color);
     }
 
     void choose_font() {

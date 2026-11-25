@@ -25,6 +25,23 @@ struct Choice {
     float number = 0;
 };
 
+inline constexpr Choice gradient_modes[] = {{L"Gradient", "gradient"}, {L"Edge", "edge"}, {L"Hough", "hough"}};
+inline constexpr int hough_mode = 2, threshold_limit = 100, sepia_limit = 255;
+
+enum class ColorEffect { extraction, threshold, negate, posterize, gradient, sepia, count };
+enum class ColorValue { extract_rgb, threshold_rgb, saturation, similarity, posterize_level, gradient_mode,
+                        gradient_color, cartoon, sepia_intensity, count };
+
+struct ColorSettings {
+    bool &enabled(ColorEffect effect) { return active[static_cast<int>(effect)]; }
+    bool enabled(ColorEffect effect) const { return active[static_cast<int>(effect)]; }
+    int &value(ColorValue option) { return values[static_cast<int>(option)]; }
+    int value(ColorValue option) const { return values[static_cast<int>(option)]; }
+
+    std::array<bool, static_cast<int>(ColorEffect::count)> active{};
+    std::array<int, static_cast<int>(ColorValue::count)> values{};
+};
+
 enum CropEdge { top_edge, bottom_edge, left_edge, right_edge, crop_edge_count };
 using CropMargins = std::array<int, crop_edge_count>;
 inline constexpr int max_crop_margin = std::numeric_limits<int>::max() / 2;
@@ -62,6 +79,8 @@ CropMargins crop_margins(VlcPlayer player);
 bool set_crop_margins(VlcPlayer player, const CropMargins &margins);
 EssentialPositions essential_positions(VlcPlayer player);
 void set_essential_position(VlcPlayer player, const EssentialSlider &slider, int position);
+ColorSettings color_settings(VlcPlayer player);
+void apply_color_settings(VlcPlayer player, ColorEffect effect, const ColorSettings &settings);
 
 inline constexpr char software_video_filter[] = "redesignsoftwarevideo";
 int open_software_video_filter(void *object);

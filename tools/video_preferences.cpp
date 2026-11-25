@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <string_view>
 
 struct ConfigOption {
@@ -54,6 +55,29 @@ namespace {
 constexpr char filter_key[] = "video-filter";
 constexpr char crop_key[] = "crop";
 constexpr CropEdge crop_order[] = {left_edge, top_edge, right_edge, bottom_edge};
+
+constexpr const char *color_modules[] = {"extract", "colorthres", "invert", "posterize", "gradient", "sepia"};
+static_assert(std::size(color_modules) == static_cast<int>(ColorEffect::count));
+
+enum class OptionType { integer, mode, flag };
+struct ColorOption {
+    ColorEffect effect;
+    const char *key, *name;
+    int minimum, maximum;
+    OptionType type = OptionType::integer;
+};
+constexpr ColorOption color_options[] = {
+    {ColorEffect::extraction, "extract-component", "component", 1, 0xffffff},
+    {ColorEffect::threshold, "colorthres-color", "color", 0, 0xffffff},
+    {ColorEffect::threshold, "colorthres-saturationthres", "saturationthres", 0, threshold_limit},
+    {ColorEffect::threshold, "colorthres-similaritythres", "similaritythres", 0, threshold_limit},
+    {ColorEffect::posterize, "posterize-level", "level", 2, 256},
+    {ColorEffect::gradient, "gradient-mode", "mode", 0, int(std::size(gradient_modes)) - 1, OptionType::mode},
+    {ColorEffect::gradient, "gradient-type", "type", 0, 1},
+    {ColorEffect::gradient, "gradient-cartoon", "cartoon", 0, 1, OptionType::flag},
+    {ColorEffect::sepia, "sepia-intensity", "intensity", 0, sepia_limit},
+};
+static_assert(std::size(color_options) == static_cast<int>(ColorValue::count));
 
 enum class Type { text, real, integer };
 struct Setting {
@@ -123,6 +147,36 @@ std::string option_value(std::string_view filter, std::string_view key, std::str
     if (const auto value = option_value(options.get(), key))
         return value;
     return fallback;
+}
+
+int mode_index(std::string_view value) {
+    const auto choice = std::find_if(std::begin(gradient_modes), std::end(gradient_modes),
+                                     [value](const Choice &mode) { return mode.text == value; });
+    return choice == std::end(gradient_modes) ? 0 : static_cast<int>(choice - std::begin(gradient_modes));
+}
+
+int color_option_value(VlcPlayer player, const ColorOption &option, const ConfigOption *inline_options = nullptr) {
+    if (option.type == OptionType::mode) {
+        if (const auto mode = option_value(inline_options, option.name))
+            return mode_index(mode);
+        return mode_index(read_string(player, option.key));
+    }
+    auto value = config_GetInt(player.vlc, option.key);
+    for (auto item = inline_options; item; item = item->next) {
+        const std::string_view name = item->name;
+        if (option.type == OptionType::flag) {
+            if (name == option.name)
+                value = 1;
+            else if (name == "no-cartoon" || name == "nocartoon")
+                value = 0;
+        } else if (name == option.name && item->value) {
+            char *end = nullptr;
+            const auto parsed = std::strtoll(item->value, &end, 0);
+            if (end != item->value && *end == '\0')
+                value = parsed;
+        }
+    }
+    return static_cast<int>(std::clamp<std::int64_t>(value, option.minimum, option.maximum));
 }
 
 const char *module_name(Effect effect) {
@@ -396,6 +450,75 @@ bool set_crop_margins(VlcPlayer player, const CropMargins &margins) {
     value.string = geometry.data();
     apply_live(player, [&](void *object) { var_Set(object, crop_key, value); });
     return vlc_config::save(player.vlc);
+}
+
+ColorSettings color_settings(VlcPlayer player) {
+    ColorSettings result;
+    for (std::size_t i = 0; i < std::size(color_options); ++i)
+        result.values[i] = color_option_value(player, color_options[i]);
+
+    vlc_config::for_each_filter(read_string(player, filter_key), [&](auto name, auto filter) {
+        const auto module = std::find(std::begin(color_modules), std::end(color_modules), name);
+        if (module == std::end(color_modules))
+            return;
+        const auto effect = static_cast<ColorEffect>(module - std::begin(color_modules));
+        result.enabled(effect) = true;
+        const auto options = filter_options(filter);
+        for (std::size_t i = 0; i < std::size(color_options); ++i) {
+            if (color_options[i].effect == effect)
+                result.values[i] = color_option_value(player, color_options[i], options.get());
+        }
+    });
+    return result;
+}
+
+void apply_color_settings(VlcPlayer player, ColorEffect effect, const ColorSettings &settings) {
+    const std::string_view module = color_modules[static_cast<int>(effect)];
+    std::string options;
+    for (std::size_t i = 0; i < std::size(color_options); ++i) {
+        const auto &option = color_options[i];
+        if (option.effect != effect)
+            continue;
+        const int value = std::clamp(settings.values[i], option.minimum, option.maximum);
+        if (!options.empty())
+            options += ',';
+        switch (option.type) {
+        case OptionType::integer:
+            config_PutInt(player.vlc, option.key, value);
+            options += std::string(option.name) + '=' + std::to_string(value);
+            break;
+        case OptionType::mode:
+            config_PutPsz(player.vlc, option.key, gradient_modes[value].text);
+            options += std::string(option.name) + '=' + gradient_modes[value].text;
+            break;
+        case OptionType::flag:
+            config_PutInt(player.vlc, option.key, value);
+            // VLC parses boolean filter options by their names.
+            if (!value)
+                options += "no-";
+            options += option.name;
+            break;
+        }
+    }
+
+    const std::string clause = options.empty() ? std::string(module) : std::string(module) + '{' + options + '}';
+    const bool enabled = settings.enabled(effect);
+    update_filter_chain(player, [&](std::string_view previous) {
+        std::string next;
+        bool found = false;
+        vlc_config::for_each_filter(previous, [&](auto name, auto filter) {
+            if (name == module) {
+                if (enabled)
+                    vlc_config::append_filter(next, clause);
+                found = true;
+            } else {
+                vlc_config::append_filter(next, filter);
+            }
+        });
+        if (enabled && !found)
+            vlc_config::append_filter(next, clause);
+        return next;
+    });
 }
 
 EssentialPositions essential_positions(VlcPlayer player) {

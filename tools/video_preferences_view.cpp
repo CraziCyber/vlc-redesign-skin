@@ -31,13 +31,17 @@ constexpr int slider_count = std::size(essential_sliders);
 constexpr int essential_height = slider_start + (slider_count - 1) * slider_spacing + 47;
 constexpr int crop_field_top = 54, crop_field_height = 33, crop_row_spacing = 49;
 constexpr int crop_height = crop_field_top + crop_row_spacing + crop_field_height + detail_inset;
-constexpr UINT_PTR render_refresh = 1, essential_preview = 2;
+constexpr int colors_height = 755, color_toggle_width = 68, color_field_width = 116, color_row_height = 32;
+constexpr UINT_PTR render_refresh = 1, slider_preview = 2;
 
 enum Control {
     no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
-    first_filter, essential_filter = first_filter, crop_filter, default_preset = first_filter + filter_count,
+    first_filter, essential_filter = first_filter, crop_filter, colors_filter, default_preset = first_filter + filter_count,
     first_essential_slider, first_crop_edge = first_essential_slider + slider_count,
-    crop_top = first_crop_edge, crop_bottom, crop_left, crop_right, link_top_bottom, link_left_right
+    crop_top = first_crop_edge, crop_bottom, crop_left, crop_right, link_top_bottom, link_left_right,
+    extract_hex, extract_swatch, extract_toggle, threshold_hex, threshold_swatch, threshold_toggle,
+    threshold_saturation, threshold_similarity, negate_toggle, posterize_toggle, gradient_toggle,
+    gradient_mode, gradient_color, gradient_cartoon, sepia_slider
 };
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
@@ -54,6 +58,7 @@ struct FilterSection {
 constexpr FilterSection sections[] = {
     {essential_filter, first_essential_slider, static_cast<Control>(first_essential_slider + slider_count - 1), essential_height},
     {crop_filter, crop_top, link_left_right, crop_height},
+    {colors_filter, extract_hex, sepia_slider, colors_height},
 };
 constexpr bool expandable(int id) { return id >= first_filter && id < first_filter + int(std::size(sections)); }
 
@@ -63,7 +68,40 @@ constexpr bool is_essential_slider(int id) {
 
 constexpr bool is_crop_edge(int id) { return id >= crop_top && id <= crop_right; }
 constexpr bool is_crop_link(int id) { return id == link_top_bottom || id == link_left_right; }
-constexpr bool is_edit(int id) { return id == rotate || is_crop_edge(id); }
+
+enum class ColorControl { hex, swatch, toggle, slider, mode };
+struct ColorRow {
+    Control id;
+    int top;
+    ColorControl type;
+    const wchar_t *label;
+    ColorEffect effect;
+    ColorValue value = ColorValue::count;
+};
+constexpr ColorRow color_rows[] = {
+    {extract_hex,          54, ColorControl::hex,    L"", ColorEffect::extraction, ColorValue::extract_rgb},
+    {extract_swatch,       54, ColorControl::swatch, L"Choose extraction color", ColorEffect::extraction, ColorValue::extract_rgb},
+    {extract_toggle,       54, ColorControl::toggle, L"Color Extraction", ColorEffect::extraction},
+    {threshold_hex,      126, ColorControl::hex,    L"", ColorEffect::threshold, ColorValue::threshold_rgb},
+    {threshold_swatch,   126, ColorControl::swatch, L"Choose threshold color", ColorEffect::threshold, ColorValue::threshold_rgb},
+    {threshold_toggle,   126, ColorControl::toggle, L"Color Threshold", ColorEffect::threshold},
+    {threshold_saturation, 203, ColorControl::slider, L"Saturation", ColorEffect::threshold, ColorValue::saturation},
+    {threshold_similarity, 279, ColorControl::slider, L"Similarity", ColorEffect::threshold, ColorValue::similarity},
+    {negate_toggle,      346, ColorControl::toggle, L"Negate Colors", ColorEffect::negate},
+    {posterize_toggle,   398, ColorControl::toggle, L"Posterize", ColorEffect::posterize},
+    {gradient_toggle,    455, ColorControl::toggle, L"Gradient", ColorEffect::gradient},
+    {gradient_mode,      502, ColorControl::mode,   L"Gradient", ColorEffect::gradient, ColorValue::gradient_mode},
+    {gradient_color,     565, ColorControl::toggle, L"Color", ColorEffect::gradient, ColorValue::gradient_color},
+    {gradient_cartoon,   613, ColorControl::toggle, L"Cartoon", ColorEffect::gradient, ColorValue::cartoon},
+    {sepia_slider,       708, ColorControl::slider, L"Sepia Intensity", ColorEffect::sepia, ColorValue::sepia_intensity},
+};
+static_assert(std::size(color_rows) == sepia_slider - extract_hex + 1);
+
+constexpr bool is_color_control(int id) { return id >= extract_hex && id <= sepia_slider; }
+constexpr const ColorRow &color_row(int id) { return color_rows[id - extract_hex]; }
+constexpr bool color_type(int id, ColorControl type) { return is_color_control(id) && color_row(id).type == type; }
+constexpr bool is_slider(int id) { return is_essential_slider(id) || color_type(id, ColorControl::slider); }
+constexpr bool is_edit(int id) { return id == rotate || is_crop_edge(id) || color_type(id, ColorControl::hex); }
 
 class View {
 public:
@@ -76,7 +114,10 @@ public:
     ~View() {
         DeleteObject(regular_);
         DeleteObject(heading_);
+        DeleteObject(small_);
     }
+
+    bool has_modal() const { return modal_; }
 
     static View *get(HWND window) {
         return reinterpret_cast<View *>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -109,7 +150,7 @@ public:
         if (show) {
             refresh();
         } else {
-            save_essential();
+            save_sliders();
             close_dropdown(false);
             if (IsChild(window_, GetFocus()) || GetFocus() == window_)
                 SetFocus(GetParent(window_));
@@ -148,7 +189,7 @@ public:
                 SetFocus(window_);
                 return true;
             }
-        } else if (message.wParam == VK_RETURN && !is_essential_slider(id) && message.hwnd != window_) {
+        } else if (message.wParam == VK_RETURN && !is_slider(id) && message.hwnd != window_) {
             SendMessageW(message.hwnd, BM_CLICK, 0, 0);
             return true;
         }
@@ -160,7 +201,7 @@ private:
     VlcPlayer player_;
     const Colors &colors_;
     Colors detail_colors_;
-    HFONT regular_ = nullptr, heading_ = nullptr;
+    HFONT regular_ = nullptr, heading_ = nullptr, small_ = nullptr;
     Scroll scroll_{content_height};
     Transform transform_;
     video_renderers::Discovery renderers_;
@@ -168,13 +209,15 @@ private:
     std::optional<Control> dropdown_;
     std::wstring original_edit_;
     EssentialPositions essential_{};
-    std::optional<int> pending_slider_;
+    std::optional<Control> pending_slider_;
     CropMargins margins_{};
     IconStrip crop_icons_;
     std::array<bool, std::size(sections)> expanded_{};
     std::array<bool, 2> crop_linked_{};
-    bool essential_dirty_ = false;
-    bool window_owned_ = false, save_failed_ = false;
+    ColorSettings color_settings_;
+    std::array<COLORREF, 16> custom_colors_{};
+    bool slider_dirty_ = false;
+    bool window_owned_ = false, save_failed_ = false, modal_ = false;
     int option_wheel_ = 0;
 
     HWND control(int id) const { return GetDlgItem(window_, id); }
@@ -190,6 +233,7 @@ private:
         InitCommonControlsEx(&common);
         regular_ = make_font(15);
         heading_ = make_font(18, FW_SEMIBOLD);
+        small_ = make_font(12);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
         crop_icons_.load(module, crop_link_icons::resource, crop_link_icons::size, crop_link_icons::count);
         for (int id = no_flip; id <= default_preset; ++id) {
@@ -214,10 +258,31 @@ private:
                 return false;
             if (id == crop_filter && !create_crop_fields(module))
                 return false;
+            if (id == colors_filter && !create_color_controls(module))
+                return false;
         }
         SendMessageW(control(rotate), EM_SETLIMITTEXT, 24, 0);
         SendMessageW(control(options_list), LB_SETITEMHEIGHT, 0, option_height);
         refresh();
+        return true;
+    }
+
+    bool create_color_controls(HINSTANCE module) {
+        for (const auto &row : color_rows) {
+            const bool edit = row.type == ColorControl::hex, slider = row.type == ColorControl::slider;
+            const DWORD style = edit ? ES_AUTOHSCROLL :
+                                slider ? TBS_NOTICKS | TBS_FIXEDLENGTH | TBS_TRANSPARENTBKGND : BS_OWNERDRAW;
+            const auto child = CreateWindowExW(0, edit ? L"EDIT" : slider ? TRACKBAR_CLASSW : L"BUTTON", row.label,
+                                               WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | style, 0, 0, 0, 0, window_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(row.id)), module, nullptr);
+            if (!child)
+                return false;
+            SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
+            if (edit)
+                SendMessageW(child, EM_SETLIMITTEXT, 14, 0);
+            if (slider)
+                setup_slider(child, 0, row.id == sepia_slider ? sepia_limit : threshold_limit);
+        }
         return true;
     }
 
@@ -252,13 +317,17 @@ private:
                                                module, nullptr);
             if (!child)
                 return false;
-            SendMessageW(child, TBM_SETRANGEMIN, FALSE, slider.minimum);
-            SendMessageW(child, TBM_SETRANGEMAX, FALSE, slider.maximum);
-            SendMessageW(child, TBM_SETTHUMBLENGTH, 27, 0);
-            SendMessageW(child, TBM_SETLINESIZE, 0, 1);
-            SendMessageW(child, TBM_SETPAGESIZE, 0, (slider.maximum - slider.minimum) / 10);
+            setup_slider(child, slider.minimum, slider.maximum);
         }
         return true;
+    }
+
+    void setup_slider(HWND child, int minimum, int maximum) const {
+        SendMessageW(child, TBM_SETRANGEMIN, FALSE, minimum);
+        SendMessageW(child, TBM_SETRANGEMAX, FALSE, maximum);
+        SendMessageW(child, TBM_SETTHUMBLENGTH, 27, 0);
+        SendMessageW(child, TBM_SETLINESIZE, 0, 1);
+        SendMessageW(child, TBM_SETPAGESIZE, 0, (maximum - minimum) / 10);
     }
 
     bool expanded(Control id) const {
@@ -294,6 +363,22 @@ private:
                                                     RECT{middle + field_gap, top, fields_right, bottom};
     }
 
+    RECT color_box(const ColorRow &row, LONG width) const {
+        const auto header = box(colors_filter, width);
+        const LONG left = header.left + detail_inset, right = header.right - detail_inset;
+        const LONG top = header.top + row.top, bottom = top + color_row_height;
+        constexpr int field_gap = 8, swatch_size = 22;
+        const LONG field_right = right - color_toggle_width - field_gap;
+        switch (row.type) {
+        case ColorControl::slider: return {left - 7, top, right + 7, top + slider_height};
+        case ColorControl::mode: return {left, top, right, top + dropdown_height};
+        case ColorControl::toggle: return {right - color_toggle_width, top, right, bottom};
+        case ColorControl::hex: return {field_right - color_field_width, top, field_right, bottom};
+        case ColorControl::swatch: return {field_right - 5 - swatch_size, top + 5, field_right - 5, top + 5 + swatch_size};
+        }
+        return {};
+    }
+
     RECT box(Control id, LONG width) const {
         const LONG right = width - inset;
         const int y = -scroll_.offset();
@@ -312,6 +397,8 @@ private:
         }
         if (is_crop_edge(id) || is_crop_link(id))
             return crop_box(id, width);
+        if (is_color_control(id))
+            return color_box(color_row(id), width);
         if (id == default_preset) {
             const int top = y + preset_top + extra_height_before(id);
             return {inset, top, right, top + preset_height};
@@ -326,9 +413,10 @@ private:
 
     void layout() {
         const auto width = bounds().right;
-        for (int id = no_flip; id <= link_left_right; ++id) {
+        for (int id = no_flip; id <= sepia_slider; ++id) {
             if (id == options_list || (is_essential_slider(id) && !expanded(essential_filter)) ||
-                (id >= first_crop_edge && !expanded(crop_filter)))
+                ((is_crop_edge(id) || is_crop_link(id)) && !expanded(crop_filter)) ||
+                (is_color_control(id) && !expanded(colors_filter)))
                 continue;
             auto area = box(static_cast<Control>(id), width);
             if (id == rotate) {
@@ -339,6 +427,11 @@ private:
             } else if (is_crop_edge(id)) {
                 area.left += 72;
                 area.right -= 8;
+                area.top += 7;
+                area.bottom -= 6;
+            } else if (color_type(id, ColorControl::hex)) {
+                area.left += 12;
+                area.right -= 31;
                 area.top += 7;
                 area.bottom -= 6;
             }
@@ -371,11 +464,13 @@ private:
             refresh_essential();
         if (expanded(crop_filter))
             refresh_crop();
+        if (expanded(colors_filter))
+            refresh_colors();
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
     }
 
     void refresh_essential() {
-        if (pending_slider_)
+        if (pending_slider_ && is_essential_slider(*pending_slider_))
             return;
         essential_ = essential_positions(player_);
         for (int i = 0; i < slider_count; ++i)
@@ -386,6 +481,77 @@ private:
         margins_ = crop_margins(player_);
         for (int i = 0; i < crop_edge_count; ++i)
             set_unfocused_text(control(first_crop_edge + i), std::to_wstring(margins_[i]) + L" px");
+    }
+
+    void refresh_colors() {
+        if (pending_slider_ && is_color_control(*pending_slider_))
+            return;
+        color_settings_ = color_settings(player_);
+        const bool threshold = color_settings_.enabled(ColorEffect::threshold);
+        const bool gradient_options = color_settings_.enabled(ColorEffect::gradient) &&
+                                      color_settings_.value(ColorValue::gradient_mode) != hough_mode;
+        for (const auto &row : color_rows) {
+            const auto child = control(row.id);
+            if (row.type == ColorControl::hex) {
+                set_unfocused_text(child, hex_text(color_settings_.value(row.value)));
+            } else if (row.type == ColorControl::slider) {
+                if (row.effect == ColorEffect::threshold)
+                    EnableWindow(child, threshold);
+                SendMessageW(child, TBM_SETPOS, TRUE, color_settings_.value(row.value));
+            } else if (row.type == ColorControl::mode) {
+                SetWindowTextW(child, gradient_modes[color_settings_.value(row.value)].label);
+            } else if (row.id == gradient_color || row.id == gradient_cartoon) {
+                EnableWindow(child, gradient_options);
+            }
+        }
+    }
+
+    bool change_color_value(const ColorRow &row, int value) {
+        if (color_settings_.value(row.value) == value)
+            return false;
+        color_settings_.value(row.value) = value;
+        if (row.effect == ColorEffect::sepia)
+            color_settings_.enabled(row.effect) = value != 0;
+        apply_color_settings(player_, row.effect, color_settings_);
+        return true;
+    }
+
+    void set_color_value(const ColorRow &row, int value) {
+        if (change_color_value(row, value))
+            save_failed_ = !vlc_config::save(player_.vlc);
+    }
+
+    void set_rgb(const ColorRow &row, std::uint32_t rgb) {
+        const auto minimum = row.effect == ColorEffect::extraction ? 1U : 0U;
+        set_color_value(row, std::max(rgb, minimum));
+    }
+
+    void choose_color(const ColorRow &row) {
+        modal_ = true;
+        const auto picked = choose_rgb(GetAncestor(window_, GA_ROOT), custom_colors_, color_settings_.value(row.value));
+        modal_ = false;
+        if (picked) {
+            set_rgb(row, *picked);
+            refresh();
+        }
+    }
+
+    bool color_toggle_on(const ColorRow &row) const {
+        if (row.value == ColorValue::count)
+            return color_settings_.enabled(row.effect);
+        return IsWindowEnabled(control(row.id)) && color_settings_.value(row.value) != 0;
+    }
+
+    void toggle_color(const ColorRow &row) {
+        if (row.value == ColorValue::count) {
+            auto &enabled = color_settings_.enabled(row.effect);
+            enabled = !enabled;
+            apply_color_settings(player_, row.effect, color_settings_);
+            save_failed_ = !vlc_config::save(player_.vlc);
+        } else {
+            set_color_value(row, !color_toggle_on(row));
+        }
+        refresh();
     }
 
     void update_link(Control id) {
@@ -402,8 +568,7 @@ private:
         const auto &section = sections[id - first_filter];
         const bool show = !expanded(id);
         if (!show) {
-            if (id == essential_filter)
-                save_essential();
+            save_sliders();
             const auto focus = GetFocus();
             const int focused_id = GetDlgCtrlID(focus);
             if (IsChild(window_, focus) && focused_id >= section.first && focused_id <= section.last)
@@ -417,8 +582,10 @@ private:
         if (show) {
             if (id == essential_filter)
                 refresh_essential();
-            else
+            else if (id == crop_filter)
                 refresh_crop();
+            else
+                refresh_colors();
         }
         for (int child = section.first; child <= section.last; ++child)
             ShowWindow(control(child), show ? SW_SHOWNOACTIVATE : SW_HIDE);
@@ -426,39 +593,65 @@ private:
             show_control(control(id == crop_filter ? crop_left : section.first));
     }
 
-    void apply_essential() {
-        KillTimer(window_, essential_preview);
-        const auto index = std::exchange(pending_slider_, std::nullopt);
-        if (!index)
+    void apply_slider() {
+        KillTimer(window_, slider_preview);
+        const auto id = std::exchange(pending_slider_, std::nullopt);
+        if (!id)
             return;
-        const int position = SendMessageW(control(first_essential_slider + *index), TBM_GETPOS, 0, 0);
-        if (position != essential_[*index]) {
-            set_essential_position(player_, essential_sliders[*index], position);
-            essential_[*index] = position;
-            essential_dirty_ = true;
+        const int position = SendMessageW(control(*id), TBM_GETPOS, 0, 0);
+        if (is_essential_slider(*id)) {
+            const auto index = *id - first_essential_slider;
+            if (position != essential_[index]) {
+                set_essential_position(player_, essential_sliders[index], position);
+                essential_[index] = position;
+                slider_dirty_ = true;
+            }
+        } else if (IsWindowEnabled(control(*id))) {
+            slider_dirty_ |= change_color_value(color_row(*id), position);
         }
     }
 
-    void save_essential() {
-        apply_essential();
-        if (std::exchange(essential_dirty_, false)) {
+    void save_sliders() {
+        apply_slider();
+        if (std::exchange(slider_dirty_, false)) {
             save_failed_ = !vlc_config::save(player_.vlc);
             InvalidateRect(window_, nullptr, FALSE);
         }
     }
 
-    void move_essential_slider(int id, WORD event) {
-        const int index = id - first_essential_slider;
-        if (pending_slider_ && *pending_slider_ != index)
-            apply_essential();
+    void move_slider(Control id, WORD event) {
+        if (pending_slider_ && *pending_slider_ != id)
+            apply_slider();
         if (event == TB_THUMBTRACK) {
             // Coalesce drag events because VLC rebuilds the video filter chain when its options change.
             if (!pending_slider_)
-                SetTimer(window_, essential_preview, 80, nullptr);
-            pending_slider_ = index;
+                SetTimer(window_, slider_preview, 80, nullptr);
+            pending_slider_ = id;
         } else {
-            pending_slider_ = index;
-            save_essential();
+            pending_slider_ = id;
+            save_sliders();
+        }
+    }
+
+    void draw_colors(HDC dc, LONG width) const {
+        const auto header = box(colors_filter, width);
+        const LONG left = header.left + detail_inset, right = header.right - detail_inset;
+        for (const int y : {106, 327, 388, 440, 660}) {
+            const LONG top = header.top + y;
+            fill(dc, {header.left, top, header.right, top + 1}, &colors_ == &dark ? RGB(32, 32, 32) : colors_.edge);
+        }
+        for (const auto &row : color_rows) {
+            const auto box = color_box(row, width);
+            if (row.type == ColorControl::hex) {
+                round_rect(dc, box, 6, detail_colors_.track);
+            } else if (row.type == ColorControl::toggle) {
+                LONG label_end = box.left - 8;
+                if (row.id == extract_toggle || row.id == threshold_toggle)
+                    label_end -= color_field_width + 8;
+                text(dc, row.label, {left, box.top, label_end, box.bottom}, regular_, colors_.dim);
+            } else if (row.type == ColorControl::slider) {
+                text(dc, row.label, {left, box.top - 33, right, box.top - 7}, regular_, colors_.dim);
+            }
         }
     }
 
@@ -512,6 +705,8 @@ private:
                 text(dc, crop_names[i], {edit.left + 12, edit.top, edit.left + 66, edit.bottom}, regular_, colors_.dim);
             }
         }
+        if (expanded(colors_filter))
+            draw_colors(dc, area.right);
         divider(top + preset_divider + extra_height_before(default_preset));
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
@@ -543,15 +738,27 @@ private:
                              crop_linked_[id - link_top_bottom] ? 1 : 0);
             return;
         }
+        if (color_type(id, ColorControl::toggle)) {
+            fill(dc, box, detail_colors_.panel);
+            draw_toggle(dc, box, color_toggle_on(color_row(id)), detail_colors_, small_);
+            return;
+        }
+        if (color_type(id, ColorControl::swatch)) {
+            fill(dc, box, detail_colors_.track);
+            round_rect(dc, box, 3, colors_.knob);
+            InflateRect(&box, -1, -1);
+            round_rect(dc, box, 2, colorref(color_settings_.value(color_row(id).value)));
+            return;
+        }
         const bool flip = item.CtlID <= vertical;
         const bool selected_flip = flip && static_cast<int>(transform_.flip) == static_cast<int>(item.CtlID) - no_flip;
         const auto label = window_text(item.hwndItem);
-        fill(dc, box, colors_.panel);
+        fill(dc, box, id == gradient_mode ? detail_colors_.panel : colors_.panel);
         const bool open = expanded(id);
-        round_rect(dc, box, 6, open ? detail_colors_.panel : colors_.track);
+        round_rect(dc, box, 6, open ? detail_colors_.panel : id == gradient_mode ? detail_colors_.track : colors_.track);
         if (open)
             fill(dc, {box.left, box.top + 6, box.right, box.bottom}, detail_colors_.panel);
-        if (item.CtlID >= first_filter) {
+        if (id >= first_filter && id <= default_preset) {
             const bool preset = item.CtlID == default_preset;
             const auto color = preset ? colors_.text : colors_.dim;
             const int arrow_inset = preset ? 28 : 23;
@@ -640,6 +847,11 @@ private:
             renderers_.start();
             update_renderers(true);
             SetTimer(window_, render_refresh, 300, nullptr);
+        } else if (id == gradient_mode) {
+            std::vector<std::wstring> labels;
+            for (const auto &mode : gradient_modes)
+                labels.emplace_back(mode.label);
+            populate_dropdown(labels, color_settings_.value(ColorValue::gradient_mode));
         } else {
             std::vector<std::wstring> labels;
             for (const auto &choice : choices(field(id)))
@@ -655,7 +867,10 @@ private:
         const auto id = *dropdown_;
         const auto output = id == render ? outputs_[index] : video_renderers::Output{};
         close_dropdown(true);
-        save_failed_ = !(id == render ? video_renderers::select(player_, output) : set_choice(player_, field(id), index));
+        if (id == gradient_mode)
+            set_color_value(color_row(id), index);
+        else
+            save_failed_ = !(id == render ? video_renderers::select(player_, output) : set_choice(player_, field(id), index));
         refresh();
     }
 
@@ -708,6 +923,9 @@ private:
                 transform_.degrees = *degrees;
                 save_failed_ = !set_transform(player_, transform_);
             }
+        } else if (color_type(id, ColorControl::hex)) {
+            if (const auto rgb = parse_color(value))
+                set_rgb(color_row(id), *rgb);
         } else if (const auto pixels = parse_number(value, L" px");
                    pixels && *pixels >= 0 && *pixels <= max_crop_margin && std::floor(*pixels) == *pixels) {
             const int edge = id - first_crop_edge;
@@ -741,7 +959,7 @@ private:
                 save_failed_ = !set_transform(player_, transform_);
                 refresh();
             }
-        } else if (event == BN_CLICKED && id >= zoom && id <= render) {
+        } else if (event == BN_CLICKED && ((id >= zoom && id <= render) || id == gradient_mode)) {
             open_dropdown(id);
         } else if (event == BN_CLICKED && expandable(id)) {
             toggle_section(id);
@@ -749,6 +967,10 @@ private:
             auto &linked = crop_linked_[id - link_top_bottom];
             linked = !linked;
             update_link(id);
+        } else if (event == BN_CLICKED && color_type(id, ColorControl::swatch)) {
+            choose_color(color_row(id));
+        } else if (event == BN_CLICKED && color_type(id, ColorControl::toggle) && IsWindowEnabled(control(id))) {
+            toggle_color(color_row(id));
         }
     }
 
@@ -764,8 +986,8 @@ private:
         case WM_PAINT: paint(window_, bounds(), [this](HDC dc) { draw(dc); }); return 0;
         case WM_PRINTCLIENT: draw(reinterpret_cast<HDC>(wp)); return 0;
         case WM_TIMER:
-            if (wp == essential_preview)
-                apply_essential();
+            if (wp == slider_preview)
+                apply_slider();
             else if (wp == render_refresh && dropdown_ == render && GetCapture() != control(options_list))
                 update_renderers(false);
             return 0;
@@ -796,24 +1018,32 @@ private:
         case WM_COMMAND: command(static_cast<Control>(LOWORD(wp)), HIWORD(wp)); return 0;
         case WM_DRAWITEM: draw_item(*reinterpret_cast<const DRAWITEMSTRUCT *>(lp)); return TRUE;
         case WM_HSCROLL: {
-            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
-            if (is_essential_slider(id))
-                move_essential_slider(id, LOWORD(wp));
+            const auto id = static_cast<Control>(GetDlgCtrlID(reinterpret_cast<HWND>(lp)));
+            if (is_slider(id))
+                move_slider(id, LOWORD(wp));
             return 0;
         }
         case WM_NOTIFY: {
             const auto note = reinterpret_cast<NMHDR *>(lp);
             const int id = static_cast<int>(note->idFrom);
-            if (is_essential_slider(id)) {
+            if (is_slider(id)) {
                 if (note->code == NM_RELEASEDCAPTURE) {
-                    save_essential();
+                    save_sliders();
                 } else if (note->code == NM_CUSTOMDRAW) {
                     const bool dark_theme = &colors_ == &dark;
-                    const SliderTicks ticks{essential_sliders[id - first_essential_slider].divisions,
+                    const int divisions = is_essential_slider(id) ? essential_sliders[id - first_essential_slider].divisions :
+                                          id == sepia_slider ? 3 : 0;
+                    const SliderTicks ticks{divisions,
                                             dark_theme ? RGB(37, 32, 26) : colors_.edge,
                                             dark_theme ? RGB(76, 52, 22) : RGB(172, 144, 115)};
-                    return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), detail_colors_, false,
-                                       dark_theme ? RGB(171, 99, 20) : colors_.accent, ticks);
+                    const auto thumb = dark_theme ? RGB(171, 99, 20) : colors_.accent;
+                    auto palette = detail_colors_;
+                    std::optional<COLORREF> disabled_fill;
+                    if (id == threshold_saturation || id == threshold_similarity) {
+                        palette.knob = dark_theme ? RGB(118, 118, 118) : colors_.knob;
+                        disabled_fill = colors_.edge;
+                    }
+                    return draw_slider(*reinterpret_cast<NMCUSTOMDRAW *>(lp), palette, false, thumb, ticks, disabled_fill);
                 }
             }
             break;
@@ -824,14 +1054,15 @@ private:
             auto background = colors_.track;
             if (message == WM_CTLCOLORLISTBOX)
                 background = colors_.button;
-            else if (is_crop_edge(GetDlgCtrlID(reinterpret_cast<HWND>(lp))))
+            else if (const auto id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
+                     is_crop_edge(id) || color_type(id, ColorControl::hex))
                 background = detail_colors_.track;
             SetTextColor(dc, colors_.text);
             SetBkColor(dc, background);
             SetDCBrushColor(dc, background);
             return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
         }
-        case WM_DESTROY: save_essential(); KillTimer(window_, render_refresh); break;
+        case WM_DESTROY: save_sliders(); KillTimer(window_, render_refresh); break;
         default: break;
         }
         return DefWindowProcW(window_, message, wp, lp);
@@ -867,6 +1098,11 @@ void set_visible(HWND window, bool visible) {
 bool handle_input(HWND window, const MSG &message) {
     const auto view = View::get(window);
     return view && view->input(message);
+}
+
+bool modal_open(HWND window) {
+    const auto view = View::get(window);
+    return view && view->has_modal();
 }
 
 }

@@ -40,7 +40,7 @@ constexpr Page pages[] = {
     {audio_preferences_view::create, audio_preferences_view::set_visible,
      audio_preferences_view::handle_input, nullptr},
     {video_preferences_view::create, video_preferences_view::set_visible,
-     video_preferences_view::handle_input, nullptr},
+     video_preferences_view::handle_input, video_preferences_view::modal_open},
 };
 
 struct Sidebar {
