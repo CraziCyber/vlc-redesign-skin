@@ -16,6 +16,8 @@
 #include <string>
 #include <string_view>
 
+#include "dropdown_icons.hpp"
+
 namespace preferences_widgets {
 
 struct Colors {
@@ -40,6 +42,39 @@ inline void round_rect(HDC dc, RECT area, int radius, COLORREF color) {
     RoundRect(dc, area.left, area.top, area.right, area.bottom, 2 * radius, 2 * radius);
     SelectObject(dc, pen);
     SelectObject(dc, brush);
+}
+
+inline constexpr int dropdown_radius = 7;
+
+inline COLORREF dropdown_background(const Colors &colors) {
+    return &colors == &dark ? RGB(25, 25, 25) : colors.button;
+}
+
+inline COLORREF dropdown_highlight(const Colors &colors) {
+    return &colors == &dark ? RGB(31, 31, 31) : colors.hover;
+}
+
+inline void draw_dropdown_row(HDC dc, RECT area, const Colors &colors, bool highlighted) {
+    fill(dc, area, dropdown_background(colors));
+    if (highlighted)
+        round_rect(dc, {area.left + 1, area.top, area.right - 1, area.bottom}, 4, dropdown_highlight(colors));
+}
+
+inline void round_dropdown(HWND list, int width, int height, bool attached_top = false) {
+    // A separate header can supply the menu's rounded top, as in the equalizer.
+    const auto shape = CreateRoundRectRgn(0, attached_top ? -dropdown_radius : 0, width + 1, height + 1,
+                                          2 * dropdown_radius, 2 * dropdown_radius);
+    if (shape && !SetWindowRgn(list, shape, FALSE))
+        DeleteObject(shape);
+}
+
+inline void place_dropdown_over_field(HWND list, RECT field, LONG viewport_height, int row_height, int rows) {
+    const LONG visible_rows = std::min<LONG>(rows, viewport_height / row_height);
+    const LONG height = std::min(viewport_height, std::max<LONG>(1, visible_rows) * row_height);
+    const LONG top = std::clamp(field.top, 0L, viewport_height - height);
+    const LONG width = field.right - field.left;
+    SetWindowPos(list, HWND_TOP, field.left, top, width, height, SWP_NOACTIVATE | SWP_NOREDRAW);
+    round_dropdown(list, width, height);
 }
 
 inline std::wstring wstring(std::string_view text) {
@@ -227,6 +262,20 @@ private:
     HBITMAP bitmap_ = nullptr;
     HGDIOBJ previous_ = nullptr;
     int size_ = 0;
+};
+
+class DropdownCheck {
+public:
+    void load(HINSTANCE module) {
+        icon_.load(module, dropdown_icons::check, dropdown_icons::size, 1);
+    }
+
+    void draw(HDC dc, const RECT &row) const {
+        icon_.draw(dc, row.right - 40, (row.top + row.bottom - dropdown_icons::size) / 2, 0);
+    }
+
+private:
+    IconStrip icon_;
 };
 
 struct SliderTicks {

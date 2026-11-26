@@ -4,7 +4,6 @@
 #include "playback_preferences_view.hpp"
 #include "playback_preferences.hpp"
 #include "preferences_widgets.hpp"
-#include "visualizer_icons.hpp"
 #include "vlc_config.hpp"
 
 #include <memory>
@@ -17,9 +16,9 @@ using namespace preferences_widgets;
 using namespace playback_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignPlaybackPreferences";
 constexpr int inset = 22, option_height = 34, content_height = 444;
-constexpr int visualizer_row_height = 46, visualizer_radius = 7;
+constexpr int visualizer_row_height = 46;
 constexpr UINT_PTR refresh_timer = 1;
-static_assert(visualizer_icons::check + 1 == std::size(visualizers));
+static_assert(dropdown_icons::visualizer_count + 1 == std::size(visualizers));
 
 enum Control { timeline = 401, statistics, reverse, sleep, visualizer, speed, slider, options };
 constexpr const wchar_t *labels[] = {
@@ -129,6 +128,7 @@ private:
     HWND window_ = nullptr;
     HFONT font_ = nullptr, small_ = nullptr;
     IconStrip visualizer_icons_;
+    DropdownCheck dropdown_check_;
     Scroll scroll_{content_height};
     Settings current_{};
     std::optional<Control> dropdown_;
@@ -165,7 +165,8 @@ private:
         font_ = make_font(15);
         small_ = make_font(12);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
-        visualizer_icons_.load(module, visualizer_icons::resource, visualizer_icons::size, visualizer_icons::count);
+        visualizer_icons_.load(module, dropdown_icons::visualizers, dropdown_icons::size, dropdown_icons::visualizer_count);
+        dropdown_check_.load(module);
         for (int id = timeline; id <= options; ++id) {
             const bool list = id == options;
             const auto type = list ? L"LISTBOX" : id == speed ? L"EDIT" : id == slider ? TRACKBAR_CLASSW : L"BUTTON";
@@ -231,7 +232,8 @@ private:
             if (SendMessageW(control(slider), TBM_GETPOS, 0, 0) != position)
                 SendMessageW(control(slider), TBM_SETPOS, TRUE, position);
         }
-        if (dropdown_ == visualizer && current_.visualizer != next.visualizer)
+        if ((dropdown_ == visualizer && current_.visualizer != next.visualizer) ||
+            (dropdown_ == sleep && current_.timer_minutes != next.timer_minutes))
             InvalidateRect(control(options), nullptr, FALSE);
         current_ = next;
         set_unfocused_text(control(speed), number_text(current_.speed, 2, L"x"));
@@ -292,16 +294,7 @@ private:
         const auto id = static_cast<Control>(item.CtlID);
         const bool selected = (item.itemState & ODS_SELECTED) != 0;
         if (id == options) {
-            if (dropdown_ == visualizer) {
-                draw_visualizer_option(dc, area, item.itemID, selected);
-                return;
-            }
-            fill(dc, area, selected ? colors_.fill : colors_.button);
-            if (dropdown_ == sleep && item.itemID < std::size(timers)) {
-                area.left += 15;
-                area.right -= 8;
-                text(dc, timers[item.itemID].label, area, font_, selected ? colors_.accent : colors_.text);
-            }
+            draw_option(dc, area, item.itemID, selected);
         } else {
             fill(dc, area, colors_.panel);
             if (id <= reverse) {
@@ -324,29 +317,30 @@ private:
 
     void draw_visualizer_icon(HDC dc, RECT &area, int index) const {
         if (index > 0) {
-            const int y = (area.top + area.bottom - visualizer_icons::size) / 2;
+            const int y = (area.top + area.bottom - dropdown_icons::size) / 2;
             visualizer_icons_.draw(dc, area.left, y, index - 1);
-            area.left += visualizer_icons::size + 10;
+            area.left += dropdown_icons::size + 10;
         }
     }
 
-    void draw_visualizer_option(HDC dc, RECT area, UINT index, bool selected) const {
-        const bool dark_theme = &colors_ == &dark;
-        fill(dc, area, dark_theme ? RGB(25,25,25) : colors_.button);
-        if (index >= std::size(visualizers))
+    int timer_choice() const {
+        const auto choice = std::find_if(std::begin(timers), std::end(timers),
+            [this](const auto &timer) { return timer.minutes == current_.timer_minutes; });
+        return choice == std::end(timers) ? 0 : static_cast<int>(choice - std::begin(timers));
+    }
+
+    void draw_option(HDC dc, RECT area, UINT index, bool highlighted) const {
+        draw_dropdown_row(dc, area, colors_, highlighted);
+        const bool timer = dropdown_ == sleep;
+        if (!dropdown_ || index >= (timer ? std::size(timers) : std::size(visualizers)))
             return;
-        if (selected) {
-            const auto highlight = dark_theme ? RGB(31,31,31) : colors_.hover;
-            round_rect(dc, {area.left + 1, area.top, area.right - 1, area.bottom}, 4, highlight);
-        }
-        if (static_cast<int>(index) == current_.visualizer) {
-            const int y = (area.top + area.bottom - visualizer_icons::size) / 2;
-            visualizer_icons_.draw(dc, area.right - 40, y, visualizer_icons::check);
-        }
+        if (static_cast<int>(index) == (timer ? timer_choice() : current_.visualizer))
+            dropdown_check_.draw(dc, area);
         area.left += 15;
         area.right -= 42;
-        draw_visualizer_icon(dc, area, static_cast<int>(index));
-        text(dc, visualizers[index].label, area, font_, colors_.text);
+        if (!timer)
+            draw_visualizer_icon(dc, area, static_cast<int>(index));
+        text(dc, timer ? timers[index].label : visualizers[index].label, area, font_, colors_.text);
     }
 
     int row_height() const { return dropdown_ == visualizer ? visualizer_row_height : option_height; }
@@ -361,56 +355,35 @@ private:
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
         const int row = row_height();
         SendMessageW(list, LB_SETITEMHEIGHT, 0, row);
-        int selected = current_.visualizer;
+        const int selected = id == sleep ? timer_choice() : current_.visualizer;
         if (id == sleep) {
-            for (std::size_t i = 0; i < std::size(timers); ++i) {
-                SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(timers[i].label));
-                if (timers[i].minutes == current_.timer_minutes)
-                    selected = static_cast<int>(i);
-            }
+            for (const auto &choice : timers)
+                SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.label));
         } else {
             for (const auto &choice : visualizers)
                 SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.label));
         }
-        const auto anchor = box(id);
-        const LONG viewport = bounds().bottom;
-        const LONG width = anchor.right - anchor.left;
-        const LONG desired = static_cast<LONG>(SendMessageW(list, LB_GETCOUNT, 0, 0)) * row;
-        LONG height, top;
-        if (id == visualizer) {
-            height = std::max<LONG>(row, std::min(desired, (viewport / row) * row));
-            top = std::clamp(anchor.top, 0L, std::max(0L, viewport - height));
-        } else {
-            const LONG below = viewport - anchor.bottom, above = anchor.top;
-            const bool down = below >= desired || below >= above;
-            height = std::max<LONG>(row, std::min(desired, ((down ? below : above) / row) * row));
-            top = std::max(0L, down ? anchor.bottom : anchor.top - height);
-        }
-        SetWindowPos(list, HWND_TOP, anchor.left, top, width, height, SWP_NOACTIVATE | SWP_NOREDRAW);
-        if (id == visualizer) {
-            const auto shape = CreateRoundRectRgn(0, 0, width + 1, height + 1, 2 * visualizer_radius, 2 * visualizer_radius);
-            if (shape && !SetWindowRgn(list, shape, FALSE))
-                DeleteObject(shape);
-        } else {
-            SetWindowRgn(list, nullptr, FALSE);
-        }
+        place_dropdown_over_field(list, box(id), bounds().bottom, row, SendMessageW(list, LB_GETCOUNT, 0, 0));
         SendMessageW(list, LB_SETCURSEL, selected, 0);
         SendMessageW(list, WM_SETREDRAW, TRUE, 0);
         ShowWindow(list, SW_SHOWNOACTIVATE);
         InvalidateRect(list, nullptr, FALSE);
         SetFocus(list);
+        if (dropdown_ == id)
+            ShowWindow(control(id), SW_HIDE);
     }
 
     void close_dropdown(bool return_focus) {
         const auto id = std::exchange(dropdown_, std::nullopt);
         if (!id)
             return;
-        const auto list = control(options);
+        const auto list = control(options), field = control(*id);
         if (GetCapture() == list)
             ReleaseCapture();
+        ShowWindow(field, SW_SHOWNOACTIVATE);
         ShowWindow(list, SW_HIDE);
         if (return_focus)
-            SetFocus(control(*id));
+            SetFocus(field);
     }
 
     void choose_option(int index) {
@@ -547,7 +520,7 @@ private:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLOREDIT: {
             const auto dc = reinterpret_cast<HDC>(wp);
-            const auto color = message == WM_CTLCOLORLISTBOX ? colors_.button : colors_.track;
+            const auto color = message == WM_CTLCOLORLISTBOX ? dropdown_background(colors_) : colors_.track;
             SetTextColor(dc, colors_.text);
             SetBkColor(dc, color);
             SetDCBrushColor(dc, color);

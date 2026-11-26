@@ -282,11 +282,13 @@ private:
     video_renderers::Discovery renderers_;
     std::vector<video_renderers::Output> outputs_;
     std::optional<Control> dropdown_;
+    int applied_option_ = -1;
     std::wstring original_edit_;
     EssentialPositions essential_{};
     std::optional<Control> pending_slider_;
     CropMargins margins_{};
     IconStrip crop_icons_;
+    DropdownCheck dropdown_check_;
     std::array<bool, std::size(sections)> expanded_{};
     std::array<bool, 2> crop_linked_{};
     ColorSettings color_settings_;
@@ -313,6 +315,7 @@ private:
         small_ = make_font(12);
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
         crop_icons_.load(module, crop_link_icons::resource, crop_link_icons::size, crop_link_icons::count);
+        dropdown_check_.load(module);
         for (int id = no_flip; id <= default_preset; ++id) {
             const bool edit = id == rotate, list = id == options_list;
             const bool pending = id == default_preset;
@@ -1013,15 +1016,17 @@ private:
         const auto dc = item.hDC;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
         if (item.CtlID == options_list) {
-            fill(dc, box, pressed ? colors_.fill : colors_.button);
+            draw_dropdown_row(dc, box, colors_, pressed);
             if (item.itemID != UINT(-1)) {
                 const auto length = SendMessageW(item.hwndItem, LB_GETTEXTLEN, item.itemID, 0);
                 if (length >= 0) {
                     std::wstring label(length + 1, L'\0');
                     SendMessageW(item.hwndItem, LB_GETTEXT, item.itemID, reinterpret_cast<LPARAM>(label.data()));
+                    if (static_cast<int>(item.itemID) == applied_option_)
+                        dropdown_check_.draw(dc, box);
                     box.left += 15;
-                    box.right -= 8;
-                    text(dc, label.c_str(), box, regular_, pressed ? colors_.accent : colors_.text);
+                    box.right -= 42;
+                    text(dc, label.c_str(), box, regular_, colors_.text);
                 }
             }
             return;
@@ -1089,17 +1094,20 @@ private:
         const auto previous = std::exchange(dropdown_, std::nullopt);
         if (!previous)
             return;
+        applied_option_ = -1;
         KillTimer(window_, render_refresh);
-        const auto list = control(options_list);
+        const auto list = control(options_list), field = control(*previous);
         if (GetCapture() == list)
             ReleaseCapture();
+        ShowWindow(field, SW_SHOWNOACTIVATE);
         ShowWindow(list, SW_HIDE);
         if (restore_focus)
-            SetFocus(control(*previous));
+            SetFocus(field);
         outputs_.clear();
     }
 
-    void populate_dropdown(const std::vector<std::wstring> &labels, int selected, int keep_top = 0) {
+    void populate_dropdown(const std::vector<std::wstring> &labels, int selected, int keep_top = 0, int focused = -1) {
+        applied_option_ = selected;
         const auto list = control(options_list);
         SendMessageW(list, WM_SETREDRAW, FALSE, 0);
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
@@ -1108,17 +1116,10 @@ private:
 
         const auto area = bounds();
         const auto anchor = box(*dropdown_, area.right);
-        const int below = area.bottom - anchor.bottom, above = anchor.top;
-        const int desired = std::min<int>(labels.size(), 7) * option_height;
-        const bool down = below >= desired || below >= above;
-        const int height = std::min(desired, std::max(0, (down ? below : above) / option_height) * option_height);
-        const int visible = height > 0 ? height : std::min<int>(option_height, area.bottom);
-        const int top = std::clamp<int>(down ? anchor.bottom : anchor.top - visible, 0, area.bottom - visible);
-        SetWindowPos(list, HWND_TOP, anchor.left, top, anchor.right - anchor.left, visible,
-                     SWP_NOACTIVATE | SWP_NOREDRAW);
+        place_dropdown_over_field(list, anchor, area.bottom, option_height, std::min<int>(labels.size(), 7));
         if (keep_top)
             SendMessageW(list, LB_SETTOPINDEX, keep_top, 0);
-        SendMessageW(list, LB_SETCURSEL, selected, 0);
+        SendMessageW(list, LB_SETCURSEL, focused < 0 ? selected : focused, 0);
         SendMessageW(list, WM_SETREDRAW, TRUE, 0);
         ShowWindow(list, SW_SHOWNOACTIVATE);
         RedrawWindow(list, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
@@ -1133,17 +1134,20 @@ private:
         }
         const auto list = control(options_list);
         const auto focused = SendMessageW(list, LB_GETCURSEL, 0, 0);
-        const auto active = !opening && focused >= 0 && static_cast<std::size_t>(focused) < outputs_.size() ?
-            outputs_[focused].id : video_renderers::selected(player_).id;
-        int selected = -1;
+        const auto active = video_renderers::selected(player_).id;
+        const auto highlighted = !opening && focused >= 0 && static_cast<std::size_t>(focused) < outputs_.size() ?
+            outputs_[focused].id : active;
+        int selected = -1, cursor = -1;
         std::vector<std::wstring> labels;
         for (const auto &output : outputs) {
             if (output.id == active)
                 selected = static_cast<int>(labels.size());
+            if (output.id == highlighted)
+                cursor = static_cast<int>(labels.size());
             labels.push_back(wstring(output.name));
         }
         outputs_ = std::move(outputs);
-        populate_dropdown(labels, selected, opening ? 0 : SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+        populate_dropdown(labels, selected, opening ? 0 : SendMessageW(list, LB_GETTOPINDEX, 0, 0), cursor);
     }
 
     void open_dropdown(Control id) {
@@ -1172,6 +1176,8 @@ private:
             populate_dropdown(labels, selected(player_, field(id)).value_or(-1));
         }
         SetFocus(control(options_list));
+        if (dropdown_ == id)
+            ShowWindow(control(id), SW_HIDE);
     }
 
     void select_option(int index) {
@@ -1402,7 +1408,7 @@ private:
             const auto dc = reinterpret_cast<HDC>(wp);
             auto background = colors_.track;
             if (message == WM_CTLCOLORLISTBOX)
-                background = colors_.button;
+                background = dropdown_background(colors_);
             else if (detail_section(GetDlgCtrlID(reinterpret_cast<HWND>(lp))))
                 background = detail_colors_.track;
             SetTextColor(dc, colors_.text);

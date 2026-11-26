@@ -17,7 +17,7 @@ using namespace preferences_widgets;
 using namespace audio_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignAudioPreferences";
 constexpr int inset = 20, label_inset = 24, field_width = 142, toggle_width = 68, option_height = 27;
-constexpr int preset_height = 46, preset_list_height = 300, dropdown_radius = 6;
+constexpr int preset_height = 46, preset_list_height = 300;
 constexpr int sync_y = 292, filters_y = 476, compressor_y = 756, spatializer_y = 881;
 constexpr int widener_y = 1006, pitch_y = 1131, content_height = 1229;
 constexpr int expand_height = 48, detail_inset = 16, slider_units = 10;
@@ -163,10 +163,6 @@ public:
         const auto icon = std::find(std::begin(keys), std::end(keys), key);
         if (icon != std::end(keys))
             icons_.draw(dc, x, y, static_cast<int>(icon - std::begin(keys)));
-    }
-
-    void selected(HDC dc, int x, int y) const {
-        icons_.draw(dc, x, y, equalizer_icons::count - 1);
     }
 
 private:
@@ -324,6 +320,7 @@ private:
     track_defaults::Preset defaults_;
     std::vector<Preset> presets_;
     PresetIcons preset_icons_;
+    DropdownCheck dropdown_check_;
     Settings settings_{};
     StereoTest test_;
     Scroll scroll_{content_height};
@@ -412,6 +409,7 @@ private:
             SendMessageW(list, LB_SETITEMHEIGHT, 0, id == choices ? option_height : preset_height);
         }
         preset_icons_.load(module);
+        dropdown_check_.load(module);
         show_defaults();
         refresh();
         SetTimer(window_, refresh_timer, 240, nullptr);
@@ -502,9 +500,6 @@ private:
             show_control(control(details.first_slider));
         }
     }
-
-    COLORREF presets_background() const { return &colors_ == &dark ? RGB(25, 25, 25) : colors_.button; }
-    COLORREF preset_selection() const { return &colors_ == &dark ? RGB(31, 31, 31) : colors_.hover; }
 
     void draw_preset_label(HDC dc, RECT box, int index, const wchar_t *label) const {
         box.left += 16;
@@ -608,10 +603,10 @@ private:
         default: break;
         }
         if (id == equalizer && dropdown_ == equalizer) {
-            const auto background = preset_selection();
+            const auto background = dropdown_highlight(colors_);
             round_rect(dc, area, dropdown_radius, background);
             fill(dc, {area.left, area.top + dropdown_radius, area.right, area.bottom}, background);
-            preset_icons_.selected(dc, area.right - 40, (area.top + area.bottom - equalizer_icons::size) / 2);
+            dropdown_check_.draw(dc, area);
             const auto label = window_text(item.hwndItem);
             area.right -= 45;
             draw_preset_label(dc, area, equalizer_choice(), label.c_str());
@@ -641,10 +636,7 @@ private:
     void draw_choice(const DRAWITEMSTRUCT &item) const {
         const auto dc = item.hDC;
         const bool equalizer_list = item.CtlID == preset_choices;
-        const bool selected = (item.itemState & ODS_SELECTED) != 0;
-        const auto background = equalizer_list ? (selected ? preset_selection() : presets_background()) :
-                                                (selected ? colors_.fill : colors_.button);
-        fill(dc, item.rcItem, background);
+        draw_dropdown_row(dc, item.rcItem, colors_, (item.itemState & ODS_SELECTED) != 0);
         if (item.itemID == UINT(-1))
             return;
         wchar_t label[128]{};
@@ -656,8 +648,11 @@ private:
                 const auto index = SendMessageW(item.hwndItem, LB_GETITEMDATA, item.itemID, 0);
                 draw_preset_label(dc, box, static_cast<int>(index), label);
             } else {
-                box.left += 13;
-                text(dc, label, box, regular_, selected ? colors_.accent : colors_.text);
+                if (static_cast<int>(item.itemID) == stereo_choice())
+                    dropdown_check_.draw(dc, item.rcItem);
+                box.left += 15;
+                box.right -= 34;
+                text(dc, label, box, regular_, colors_.text);
             }
         }
     }
@@ -788,13 +783,15 @@ private:
         const auto id = std::exchange(dropdown_, std::nullopt);
         if (!id)
             return;
-        const auto list = choice_list(*id);
+        const auto list = choice_list(*id), field = control(*id);
         if (GetCapture() == list)
             ReleaseCapture();
+        if (*id == stereo_mode)
+            ShowWindow(field, SW_SHOWNOACTIVATE);
         ShowWindow(list, SW_HIDE);
-        InvalidateRect(control(*id), nullptr, FALSE);
+        InvalidateRect(field, nullptr, FALSE);
         if (focus_button)
-            SetFocus(control(*id));
+            SetFocus(field);
     }
 
     void open_choices(Control id, const std::vector<std::wstring> &labels, int selected) {
@@ -809,27 +806,19 @@ private:
         MapWindowPoints(nullptr, window_, reinterpret_cast<POINT *>(&box), 2);
         const auto area = bounds();
         const bool equalizer_list = id == equalizer;
-        int top, height;
+        int preset_menu_height = 0;
         if (equalizer_list) {
             const int desired = std::min<int>(preset_list_height, (labels.size() - 1) * preset_height);
-            height = std::min<int>(desired, std::max(1L, area.bottom - (box.bottom - box.top)));
+            const int height = std::min<int>(desired, std::max(1L, area.bottom - (box.bottom - box.top)));
             const int offset = scroll_.offset();
             const int shortage = std::max(0L, box.bottom + height - area.bottom);
             if (scroll_.move(offset + shortage, area)) {
                 layout();
                 OffsetRect(&box, 0, offset - scroll_.offset());
             }
-            top = box.bottom;
-            height = std::min<int>(height, area.bottom - top);
-            if (height <= 0)
+            preset_menu_height = std::min<int>(height, area.bottom - box.bottom);
+            if (preset_menu_height <= 0)
                 return;
-        } else {
-            const int below = area.bottom - box.bottom, above = box.top;
-            const int desired = std::min<int>(labels.size(), 8) * option_height;
-            const bool down = below >= desired || below >= above;
-            const int count = std::max(1, (down ? below : above) / option_height);
-            height = std::min(desired, count * option_height);
-            top = std::clamp<int>(down ? box.bottom : box.top - height, 0, std::max(0L, area.bottom - height));
         }
         const auto list = choice_list(id);
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
@@ -842,18 +831,20 @@ private:
         }
         dropdown_ = id;
         choice_wheel_ = 0;
-        const int width = box.right - box.left;
         if (equalizer_list) {
-            // The button stays above the scrolling choices and supplies the rounded top of the menu.
-            const auto shape = CreateRoundRectRgn(0, -dropdown_radius, width + 1, height + 1,
-                                                  2 * dropdown_radius, 2 * dropdown_radius);
-            if (shape && !SetWindowRgn(list, shape, FALSE))
-                DeleteObject(shape);
+            const int width = box.right - box.left;
+            round_dropdown(list, width, preset_menu_height, true);
             InvalidateRect(field, nullptr, FALSE);
+            SetWindowPos(list, HWND_TOP, box.left, box.bottom, width, preset_menu_height, SWP_NOACTIVATE | SWP_NOREDRAW);
+        } else {
+            place_dropdown_over_field(list, box, area.bottom, option_height, std::min<int>(labels.size(), 8));
         }
-        SetWindowPos(list, HWND_TOP, box.left, top, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
         SendMessageW(list, LB_SETCURSEL, equalizer_list ? -1 : selected, 0);
+        ShowWindow(list, SW_SHOWNOACTIVATE);
+        InvalidateRect(list, nullptr, FALSE);
         SetFocus(list);
+        if (!equalizer_list && dropdown_ == id)
+            ShowWindow(field, SW_HIDE);
     }
 
     void scroll_choices(Control id, int delta) {
@@ -1087,8 +1078,7 @@ private:
         }
         case WM_CTLCOLORLISTBOX: {
             const auto dc = reinterpret_cast<HDC>(wp);
-            const auto background = reinterpret_cast<HWND>(lp) == control(preset_choices)
-                ? presets_background() : colors_.button;
+            const auto background = dropdown_background(colors_);
             SetBkColor(dc, background);
             SetDCBrushColor(dc, background);
             return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
