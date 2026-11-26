@@ -23,9 +23,7 @@ constexpr const wchar_t *filter_names[] = {L"Essential", L"Crop", L"Colors", L"G
 constexpr int filter_count = std::size(filter_names);
 constexpr int filters_top = 645, first_filter_top = filters_top + 81;
 constexpr int filter_stride = 125, filter_height = 48;
-constexpr int preset_divider = first_filter_top + (filter_count - 1) * filter_stride + filter_height + 12;
-constexpr int preset_top = preset_divider + 21, preset_height = 42;
-constexpr int content_height = preset_top + preset_height + 13;
+constexpr int content_height = first_filter_top + (filter_count - 1) * filter_stride + filter_height + 19;
 constexpr int detail_inset = 16, slider_height = 30, slider_start = 87, slider_spacing = 76;
 constexpr int slider_count = std::size(essential_sliders);
 constexpr int essential_height = slider_start + (slider_count - 1) * slider_spacing + 47;
@@ -39,7 +37,7 @@ constexpr UINT_PTR render_refresh = 1, slider_preview = 2;
 enum Control {
     no_flip = 301, horizontal, vertical, rotate, zoom, hdr, resolution, aspect, crop, render, options_list,
     first_filter, essential_filter = first_filter, crop_filter, colors_filter, geometry_filter, overlay_filter,
-    advanced_filter, default_preset,
+    advanced_filter, end_filters,
     first_essential_slider, first_crop_edge = first_essential_slider + slider_count,
     crop_top = first_crop_edge, crop_bottom, crop_left, crop_right, link_top_bottom, link_left_right,
     extract_hex, extract_swatch, extract_toggle, threshold_hex, threshold_swatch, threshold_toggle,
@@ -50,7 +48,7 @@ enum Control {
     denoiser_toggle, spatial_luma, spatial_chroma, temporal_luma, temporal_chroma,
     antiflicker_toggle, flicker_window, flicker_softening, blur_toggle, blur_strength
 };
-static_assert(default_preset == first_filter + filter_count);
+static_assert(end_filters == first_filter + filter_count);
 constexpr const wchar_t *flip_names[] = {L"None", L"Horizontal", L"Vertical"};
 constexpr const wchar_t *dropdown_names[] = {L"Zoom", L"HDR", L"Resolution", L"Aspect Ratio", L"Crop", L"Render"};
 constexpr const wchar_t *crop_names[] = {L"Top", L"Bottom", L"Left", L"Right"};
@@ -316,17 +314,16 @@ private:
         const auto module = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(window_, GWLP_HINSTANCE));
         crop_icons_.load(module, crop_link_icons::resource, crop_link_icons::size, crop_link_icons::count);
         dropdown_check_.load(module);
-        for (int id = no_flip; id <= default_preset; ++id) {
+        for (int id = no_flip; id < end_filters; ++id) {
             const bool edit = id == rotate, list = id == options_list;
-            const bool pending = id == default_preset;
             const DWORD style = edit ? ES_AUTOHSCROLL : list ?
                 LBS_HASSTRINGS | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT : BS_OWNERDRAW;
             const wchar_t *label = L"";
             if (id <= vertical)
                 label = flip_names[id - no_flip];
             else if (id >= first_filter)
-                label = id == default_preset ? L"Default Preset" : L"Expand Settings";
-            const DWORD visibility = list ? 0 : WS_VISIBLE | (pending ? WS_DISABLED : WS_TABSTOP);
+                label = L"Expand Settings";
+            const DWORD visibility = list ? 0 : WS_VISIBLE | WS_TABSTOP;
             const auto child = CreateWindowExW(0, edit ? L"EDIT" : list ? L"LISTBOX" : L"BUTTON", label,
                                                WS_CHILD | WS_CLIPSIBLINGS | visibility | style,
                                                0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
@@ -524,10 +521,6 @@ private:
             return color_box(color_row(id), width);
         if (is_effect_control(id))
             return effect_box(effect_row(id), width);
-        if (id == default_preset) {
-            const int top = y + preset_top + extra_height_before(id);
-            return {inset, top, right, top + preset_height};
-        }
         if (id >= first_filter) {
             const int top = y + first_filter_top + (id - first_filter) * filter_stride + extra_height_before(id);
             return {inset, top, right, top + filter_height};
@@ -540,7 +533,7 @@ private:
         const auto width = bounds().right;
         for (int id = no_flip; id <= blur_strength; ++id) {
             const auto section = detail_section(id);
-            if (id == options_list || (section && !expanded(section->header)))
+            if (id == options_list || id == end_filters || (section && !expanded(section->header)))
                 continue;
             auto area = box(static_cast<Control>(id), width);
             if (id == rotate || (is_effect_control(id) && is_edit(id))) {
@@ -812,7 +805,7 @@ private:
         }
         expanded_[id - first_filter] = show;
         SetWindowTextW(control(id), show ? L"Collapse Settings" : L"Expand Settings");
-        scroll_.set_content_height(content_height + extra_height_before(default_preset));
+        scroll_.set_content_height(content_height + extra_height_before(end_filters));
         scroll_.move(scroll_.offset(), bounds());
         layout();
         if (show) {
@@ -1006,7 +999,6 @@ private:
             if (section.header >= geometry_filter && expanded(section.header))
                 draw_effects(dc, area.right, section);
         }
-        divider(top + preset_divider + extra_height_before(default_preset));
         if (scroll_.limit(area))
             round_rect(dc, scroll_.thumb(area), 2, colors_.knob);
     }
@@ -1071,13 +1063,9 @@ private:
         round_rect(dc, box, 6, open ? detail_colors_.panel : palette.track);
         if (open)
             fill(dc, {box.left, box.top + 6, box.right, box.bottom}, detail_colors_.panel);
-        if (id >= first_filter && id <= default_preset) {
-            const bool preset = item.CtlID == default_preset;
-            const auto color = preset ? colors_.text : colors_.dim;
-            const int arrow_inset = preset ? 28 : 23;
-            const auto direction = preset ? Arrow::up : open ? Arrow::down : Arrow::right;
-            arrow(dc, box.right - arrow_inset, (box.top + box.bottom) / 2, direction, color);
-            text(dc, label.c_str(), {box.left + 16, box.top, box.right - 38, box.bottom}, regular_, color);
+        if (expandable(id)) {
+            arrow(dc, box.right - 23, (box.top + box.bottom) / 2, open ? Arrow::down : Arrow::right, colors_.dim);
+            text(dc, label.c_str(), {box.left + 16, box.top, box.right - 38, box.bottom}, regular_, colors_.dim);
             return;
         }
         InflateRect(&box, -2, -2);

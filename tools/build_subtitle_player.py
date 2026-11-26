@@ -18,7 +18,7 @@ from build import (  # noqa: E402
     PREFERENCES_TOP, PREFERENCES_WIDTH, build,
 )
 from skinlib.context_menu import write_resources  # noqa: E402
-from skinlib.paint import FIGMA  # noqa: E402
+from skinlib.paint import FIGMA, ICONS  # noqa: E402
 
 MODULE = "libsubtitlepanel_plugin.dll"
 CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vlc_object_hold", "vlc_object_release",
@@ -118,6 +118,20 @@ def write_dropdown_icons(directory):
     return f'{visualizer_id} RCDATA "{visualizers.as_posix()}"\n{check_id} RCDATA "{check.as_posix()}"\n'
 
 
+def write_preset_footer_icons(directory):
+    size, resource = 24, 108
+    cells = [ICONS["settings"], ICONS["chevron_up"]]
+    bitmap = directory / "preset_footer_icons.bgra"
+    write_icon_strip(bitmap, size, cells)
+    (directory / "preset_footer_icons.hpp").write_text(
+        "#pragma once\n\nnamespace preset_footer_icons {\n"
+        f"constexpr int resource = {resource}, size = {size}, count = {len(cells)};\n"
+        "constexpr int settings = 0, chevron = 1;\n"
+        "}\n", encoding="ascii",
+    )
+    return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
+
+
 def build_module(output, toolchain):
     with TemporaryDirectory() as temporary:
         temp = Path(temporary)
@@ -136,6 +150,7 @@ def build_module(output, toolchain):
             script.write(write_preset_icons(temp))
             script.write(write_crop_link_icons(temp))
             script.write(write_dropdown_icons(temp))
+            script.write(write_preset_footer_icons(temp))
             dialog_resource = ROOT / "tools/add_subtitles.rc"
             script.write(f'#include "{dialog_resource.as_posix()}"\n')
         subprocess.run([toolchain / "windres.exe", "-c", "65001", "-i", resource_script,
