@@ -34,6 +34,7 @@ struct StyleResult {
 
 Synchronization timing(Player player);
 bool set_timing(Player player, Timing field, double value);
+bool adjust_delay(Input *input, int milliseconds);
 Appearance appearance(Player player);
 StyleResult set_style(Player player, Style field, const Appearance &style);
 void use_saved_style(Player player);

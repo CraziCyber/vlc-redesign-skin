@@ -116,6 +116,12 @@ void restart_subtitles(Input *input) {
         input_Control(input, input_restart_es, static_cast<int>(track.integer));
 }
 
+bool set_delay(Input *input, double seconds) {
+    VlcValue delay{};
+    delay.integer = std::llround(std::clamp(seconds, -600.0, 600.0) * ticks_per_second);
+    return var_Set(input, "spu-delay", delay) == 0;
+}
+
 }
 
 Synchronization timing(Player player) {
@@ -144,8 +150,7 @@ bool set_timing(Player player, Timing field, double number) {
     VlcValue value{};
     switch (field) {
     case Timing::delay:
-        value.integer = std::llround(std::clamp(number, -600.0, 600.0) * ticks_per_second);
-        return var_Set(input.get(), "spu-delay", value) == 0;
+        return set_delay(input.get(), number);
     case Timing::speed:
         // 1 is the sidebar's normal speed. VLC stores automatic FPS as 0.
         value.real = number <= 1 ? 0.0f : static_cast<float>(std::min(number, 100.0));
@@ -154,6 +159,12 @@ bool set_timing(Player player, Timing field, double number) {
         return set_duration(player, std::move(input), std::clamp(number, 0.0, 20.0));
     }
     return false;
+}
+
+bool adjust_delay(Input *input, int milliseconds) {
+    VlcValue delay{};
+    return active_playback(input) && var_Get(input, "spu-delay", &delay) == 0 &&
+        set_delay(input, delay.integer / ticks_per_second + milliseconds / 1000.0);
 }
 
 Appearance appearance(Player player) {

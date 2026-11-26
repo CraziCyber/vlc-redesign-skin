@@ -7,10 +7,10 @@
 
 namespace subtitle_timeline {
 
-// The panel worker reads cues. The Skins2 thread owns the seekbar decoration.
+// The panel worker reads cues. The Skins2 thread owns the timeline controls.
 bool refresh(VlcPlayer player, Input *input, LibVlcRef &metadata, std::string_view loaded_subtitle);
 void release();
 UINT update_message();
-void update_window(HWND window, bool draw_marks, bool fullscreen_toolbar);
+void update_window(HWND window, bool show_timeline, bool fullscreen_toolbar);
 
 }
