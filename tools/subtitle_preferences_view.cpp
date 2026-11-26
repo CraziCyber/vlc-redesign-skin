@@ -2,6 +2,7 @@
 #define NOMINMAX
 #define UNICODE
 #include "subtitle_preferences_view.hpp"
+#include "preferences_presets.hpp"
 #include "preferences_widgets.hpp"
 #include "track_defaults.hpp"
 
@@ -104,8 +105,21 @@ public:
         if (!show && (GetFocus() == window_ || IsChild(window_, GetFocus())))
             SetFocus(GetParent(window_));
         ShowWindow(window_, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (show)
+        if (show) {
+            defaults_ = track_defaults::load(player_, track_defaults::Kind::subtitles);
+            defaults_notice_ = nullptr;
+            refresh_defaults();
             refresh_timing();
+            auto next = appearance(player_);
+            if (style_.font_pixels != next.font_pixels)
+                last_pixel_size_ = next.font_pixels;
+            reopen_media_ |= sync_.active && (style_.font != next.font || style_.color != next.color ||
+                style_.outline_color != next.outline_color || style_.outline_percent != next.outline_percent ||
+                style_.background_alpha != next.background_alpha);
+            style_ = std::move(next);
+            refresh_appearance();
+            InvalidateRect(window_, nullptr, FALSE);
+        }
     }
 
     bool input(const MSG &message) {
@@ -452,7 +466,7 @@ private:
     void set_number(Control id, double value) {
         for (const auto &slider : sliders) {
             if (id == slider.field) {
-                set_timing(player_, slider.setting, value);
+                preferences_presets::set_subtitle_timing(player_, slider.setting, value);
                 refresh_timing();
                 return;
             }

@@ -169,25 +169,39 @@ bool track_defaults::save(VlcPlayer player, Kind kind, const Preset &preset) {
     return vlc_config::save(player.vlc);
 }
 
+void track_defaults::AutoSelect::restore_track(const char *variable) {
+    if (track_override_ && active_playback(input_.get())) {
+        VlcValue current{};
+        if (var_Get(input_.get(), variable, &current) == 0 && current.integer == track_override_->selected)
+            var_Set(input_.get(), variable, VlcValue{track_override_->original});
+    }
+    track_override_.reset();
+}
+
 void track_defaults::AutoSelect::refresh(VlcPlayer player, LibVlcRef &library) {
     auto preset = load(player, kind_);
-    if (!preset.track && preset.language.empty()) {
-        preset_ = {};
-        input_.reset();
-        applied_ = false;
+    const bool automatic = !preset.track && preset.language.empty();
+    if (automatic && !input_)
         return;
-    }
 
+    const char *variable = kind_ == Kind::audio ? "audio-es" : "spu-es";
     InputRef current(playlist_CurrentInput(player.playlist), vlc_object_release);
-    if (current.get() != input_.get() || !(preset == preset_)) {
+    if (current.get() != input_.get()) {
         input_ = std::move(current);
+        track_override_.reset();
+        applied_ = false;
+    }
+    if (automatic) {
+        restore_track(variable);
+        input_.reset();
+    }
+    if (!(preset == preset_)) {
         preset_ = std::move(preset);
         applied_ = false;
     }
     if (applied_ || !active_playback(input_.get()))
         return;
 
-    const char *variable = kind_ == Kind::audio ? "audio-es" : "spu-es";
     const VlcChoices choices(input_.get(), variable);
     if (!choices.ids.list)
         return;
@@ -218,9 +232,18 @@ void track_defaults::AutoSelect::refresh(VlcPlayer player, LibVlcRef &library) {
     // Apply once per input or preset edit so a manual switch stays in effect.
     if (const auto id = preferred_track(preset_, available, tracks ? &*tracks : nullptr, kind_)) {
         VlcValue selected{};
-        applied_ = (var_Get(input_.get(), variable, &selected) == 0 && selected.integer == *id) ||
-                   var_Set(input_.get(), variable, VlcValue{*id}) == 0;
+        if (var_Get(input_.get(), variable, &selected) != 0)
+            return;
+        if (track_override_ && track_override_->selected != selected.integer)
+            track_override_.reset();
+        applied_ = selected.integer == *id;
+        if (!applied_ && var_Set(input_.get(), variable, VlcValue{*id}) == 0) {
+            const auto original = track_override_ ? track_override_->original : selected.integer;
+            track_override_ = TrackOverride{original, *id};
+            applied_ = true;
+        }
     } else {
+        restore_track(variable);
         applied_ = true;
     }
 }

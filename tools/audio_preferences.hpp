@@ -4,6 +4,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "vlc_input.hpp"
@@ -69,9 +70,10 @@ struct Preset {
 };
 
 Settings read(VlcPlayer player, const std::vector<Preset> &presets);
+std::optional<double> delay(VlcPlayer player);
 std::vector<Preset> equalizer_presets(VlcPlayer player);
 void set_stereo_mode(VlcPlayer player, int mode);
-void set_delay(VlcPlayer player, double seconds);
+bool set_delay(VlcPlayer player, double seconds);
 void set_equalizer(VlcPlayer player, const Preset *preset);
 void set_equalizer_gains(VlcPlayer player, const EqualizerGains &gains);
 void set_two_pass(VlcPlayer player, bool enabled);
@@ -79,6 +81,9 @@ void set_filter(VlcPlayer player, Filter filter, bool enabled);
 void set_filter_value(VlcPlayer player, const FilterParameter &parameter, float value);
 void reload_widener(VlcPlayer player);
 void set_pitch(VlcPlayer player, float semitones);
+void append_preset_keys(std::vector<const char *> &keys);
+std::string preset_filters(VlcPlayer player);
+void apply_preset(VlcPlayer player, std::string_view filters);
 
 class StereoTest {
 public:

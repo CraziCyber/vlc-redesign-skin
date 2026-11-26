@@ -38,6 +38,7 @@ bool adjust_delay(Input *input, int milliseconds);
 Appearance appearance(Player player);
 StyleResult set_style(Player player, Style field, const Appearance &style);
 void use_saved_style(Player player);
+void apply_preset_appearance(Player player, bool formatted_changed);
 void reset_duration_on_media_change(Player player);
 void release_media();
 

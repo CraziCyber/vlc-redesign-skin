@@ -27,6 +27,7 @@
 #include "hidden_controls.hpp"
 #include "playback_preferences.hpp"
 #include "player_window.hpp"
+#include "preferences_presets.hpp"
 #include "preferences_sidebar.hpp"
 #include "subtitle_drop.hpp"
 #include "subtitle_timeline.hpp"
@@ -1592,6 +1593,7 @@ private:
         bool refresh_timeline = false;
         if (redesign) {
             const InputRef input(playlist_CurrentInput(player.playlist), vlc_object_release);
+            preferences_presets::refresh(player, input.get());
             playback_preferences::refresh(player, input.get(), metadata_library_);
             std::string_view loaded;
             VlcValue selected{};
@@ -2162,10 +2164,11 @@ int open_panel(VlcInterface *interface) {
     return 0;
 }
 
-void close_panel(VlcInterface *) {
+void close_panel(VlcInterface *interface) {
     context_interface.store(nullptr);
     delete active_panel;
     active_panel = nullptr;
+    preferences_presets::release({interface->libvlc, interface->parent});
     subtitle_preferences::release_media();
 }
 
@@ -2197,6 +2200,8 @@ extern "C" __declspec(dllexport) int vlc_entry__3_0_0f(
     };
     if (!add_preference(track_defaults::subtitle_key, "Subtitle defaults preset", "Preferred subtitle track number and language.") ||
         !add_preference(track_defaults::audio_key, "Audio defaults preset", "Preferred audio track number and language.") ||
+        !add_preference(preferences_presets::names_key, "Preset names", "Names of the saved presets and the selected preset.") ||
+        !add_preference(preferences_presets::settings_key, "Preset settings", "Saved subtitle, audio and video settings for each preset.") ||
         !add_preference(playback_preferences::timeline_key, "Subtitle timeline", "Show subtitle cue timing on the seekbar.") ||
         !add_preference(playback_preferences::statistics_key, "Playback statistics", "Display live video and audio statistics."))
         return -1;

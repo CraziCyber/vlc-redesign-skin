@@ -4,6 +4,7 @@
 #include "audio_preferences_view.hpp"
 #include "audio_preferences.hpp"
 #include "equalizer_icons.hpp"
+#include "preferences_presets.hpp"
 #include "preferences_widgets.hpp"
 #include "track_defaults.hpp"
 #include "vlc_config.hpp"
@@ -223,8 +224,12 @@ public:
             save_slider_settings();
         }
         ShowWindow(window_, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (show)
+        if (show) {
+            defaults_ = track_defaults::load(player_, defaults_kind);
+            defaults_notice_ = nullptr;
+            show_defaults();
             refresh();
+        }
     }
 
     bool input(const MSG &message) {
@@ -937,7 +942,7 @@ private:
                     if (value != original_) {
                         if (const auto number = parse_number(value, gain ? L" dB" : L" s")) {
                             if (!gain)
-                                set_delay(player_, *number);
+                                preferences_presets::set_audio_delay(player_, *number);
                             else if (change_gain(gain_index(id), *number))
                                 vlc_config::save(player_.vlc);
                         }
@@ -1001,7 +1006,7 @@ private:
             const bool spatializer_setting = is_expanded(Section::spatializer) && is_spatializer_slider(id);
             const bool widener_setting = is_expanded(Section::widener) && is_widener_slider(id);
             if (id == delay_slider && IsWindowEnabled(slider))
-                set_delay(player_, position / 1000.0);
+                preferences_presets::set_audio_delay(player_, position / 1000.0);
             if (id == pitch_slider) {
                 const float semitones = position / 10.0f;
                 if (semitones != settings_.pitch) {

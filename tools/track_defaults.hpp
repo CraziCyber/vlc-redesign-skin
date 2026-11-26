@@ -32,9 +32,14 @@ public:
     void refresh(VlcPlayer player, LibVlcRef &library);
 
 private:
+    struct TrackOverride { std::int64_t original, selected; };
+
+    void restore_track(const char *variable);
+
     Kind kind_;
     Preset preset_;
     InputRef input_{nullptr, vlc_object_release};
+    std::optional<TrackOverride> track_override_;
     bool applied_ = false;
 };
 

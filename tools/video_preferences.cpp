@@ -737,4 +737,74 @@ void set_essential_position(VlcPlayer player, const EssentialSlider &slider, int
     });
 }
 
+namespace {
+
+bool preset_video_filter(std::string_view name, std::string_view) {
+    return name == "rotate" || name == "transform" || name == software_video_filter ||
+        std::find(std::begin(color_modules), std::end(color_modules), name) != std::end(color_modules) ||
+        std::any_of(std::begin(essential_sliders), std::end(essential_sliders),
+                    [&](const auto &slider) { return name == module_name(slider.effect); }) ||
+        std::any_of(std::begin(effect_modules), std::end(effect_modules),
+                    [&](const auto &module) { return module.chain == filter_key && name == module.name; });
+}
+
+bool preset_overlay(std::string_view name, std::string_view) {
+    return std::any_of(std::begin(effect_modules), std::end(effect_modules),
+                    [&](const auto &module) { return module.chain == overlay_key && name == module.name; });
+}
+
+}
+
+void append_preset_keys(std::vector<const char *> &keys) {
+    keys.insert(keys.end(), {"autoscale", "rotate-angle", "transform-type"});
+    for (const auto &setting : settings)
+        keys.push_back(setting.key);
+    for (const auto &slider : essential_sliders)
+        keys.push_back(slider.key);
+    for (const auto &option : color_options)
+        keys.push_back(option.key);
+    for (const auto &option : effect_options)
+        keys.push_back(option.key);
+    for (const auto &module : effect_modules)
+        if (module.text_key)
+            keys.push_back(module.text_key);
+}
+
+PresetFilters preset_filters(VlcPlayer player) {
+    return {vlc_config::split_filters(read_string(player, filter_key), preset_video_filter).selected,
+            vlc_config::split_filters(read_string(player, overlay_key), preset_overlay).selected};
+}
+
+void apply_preset(VlcPlayer player, const PresetFilters &filters) {
+    VlcValue autoscale{};
+    autoscale.boolean = config_GetInt(player.vlc, "autoscale") != 0;
+    apply_live(player, [&](void *object) { var_Set(object, "autoscale", autoscale); });
+    for (const auto &setting : settings) {
+        VlcValue value{};
+        std::string text;
+        switch (setting.type) {
+        case Type::text:
+            text = read_string(player, setting.key);
+            value.string = text.data();
+            break;
+        case Type::real:
+            value.real = config_GetFloat(player.vlc, setting.key);
+            break;
+        case Type::integer:
+            value.integer = config_GetInt(player.vlc, setting.key);
+            break;
+        }
+        if (setting.live)
+            apply_live(player, [&](void *object) { var_Set(object, setting.key, value); });
+        else if (player.playlist)
+            var_Set(player.playlist, setting.key, value);
+    }
+    update_filter_chain(player, [&](std::string_view previous) {
+        return vlc_config::replace_filters(previous, filters.video, preset_video_filter);
+    });
+    update_filter_chain(player, [&](std::string_view previous) {
+        return vlc_config::replace_filters(previous, filters.overlays, preset_overlay);
+    }, overlay_key);
+}
+
 }

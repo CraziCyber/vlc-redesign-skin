@@ -231,6 +231,18 @@ void use_saved_style(Player player) {
     enable_style_filter(player, input.get());
 }
 
+void apply_preset_appearance(Player player, bool formatted_changed) {
+    use_saved_style(player);
+    const auto style = appearance(player);
+    set_live_font_size(style.font_pixels, style.font_divisor);
+    const auto input = current_input(player);
+    const VideoOutputs outputs(input.get());
+    for (std::size_t i = 0; i < outputs.count; ++i)
+        var_Set(outputs.items[i], "sub-margin", VlcValue{style.offset});
+    if (formatted_changed)
+        restart_subtitles(input.get());
+}
+
 void reset_duration_on_media_change(Player player) {
     if (!duration_modified.load())
         return;

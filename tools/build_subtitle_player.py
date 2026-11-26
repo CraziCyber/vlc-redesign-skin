@@ -32,7 +32,7 @@ CORE_EXPORTS = ("playlist_CurrentInput", "playlist_Lock", "playlist_Unlock", "vl
                 "es_format_Copy", "es_format_Clean", "es_format_IsSimilar", "vlc_fourcc_GetChromaDescription",
                 "vlc_renderer_item_hold", "vlc_renderer_item_release",
                 "vlc_renderer_item_name", "vlc_renderer_item_sout", "vlc_renderer_item_flags",
-                "config_GetInt", "config_PutInt", "config_GetFloat", "config_PutFloat",
+                "config_FindConfig", "config_GetType", "config_GetInt", "config_PutInt", "config_GetFloat", "config_PutFloat",
                 "config_SaveConfigFile", "demux_vaControl", "module_get_object", "text_style_Delete",
                 "vlc_list_children", "vlc_list_release", "GetLang_1",
                 "vout_RegisterSubpictureChannel", "vout_FlushSubpictureChannel", "vout_OSDText",
@@ -120,13 +120,13 @@ def write_dropdown_icons(directory):
 
 def write_preset_footer_icons(directory):
     size, resource = 24, 108
-    cells = [ICONS["settings"], ICONS["chevron_up"]]
+    cells = [ICONS[name] for name in ("settings", "chevron_up", "add", "more")]
     bitmap = directory / "preset_footer_icons.bgra"
     write_icon_strip(bitmap, size, cells)
     (directory / "preset_footer_icons.hpp").write_text(
         "#pragma once\n\nnamespace preset_footer_icons {\n"
         f"constexpr int resource = {resource}, size = {size}, count = {len(cells)};\n"
-        "constexpr int settings = 0, chevron = 1;\n"
+        "constexpr int settings = 0, chevron = 1, add = 2, more = 3;\n"
         "}\n", encoding="ascii",
     )
     return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
@@ -167,6 +167,7 @@ def build_module(output, toolchain):
                         "-shared", "-static", "-I", temp, "-o", output, ROOT / "tools/subtitle_panel.cpp",
                         ROOT / "tools/add_subtitles.cpp", ROOT / "tools/context_menu.cpp", ROOT / "tools/hidden_controls.cpp",
                         ROOT / "tools/player_window.cpp", ROOT / "tools/preferences_sidebar.cpp",
+                        ROOT / "tools/preset_footer.cpp", ROOT / "tools/preferences_presets.cpp",
                         ROOT / "tools/subtitle_preferences.cpp", ROOT / "tools/subtitle_preferences_view.cpp",
                         ROOT / "tools/track_defaults.cpp", ROOT / "tools/audio_preferences.cpp",
                         ROOT / "tools/audio_preferences_view.cpp", ROOT / "tools/stereo_test.cpp",

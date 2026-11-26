@@ -10,7 +10,6 @@
 #include <atomic>
 #include <cwchar>
 #include <iterator>
-#include <memory>
 #include <utility>
 
 #include "audio_preferences_view.hpp"
@@ -19,7 +18,7 @@
 #include "player_window.hpp"
 #include "preferences_layout.hpp"
 #include "preferences_widgets.hpp"
-#include "preset_footer_icons.hpp"
+#include "preset_footer.hpp"
 #include "subtitle_preferences_view.hpp"
 #include "video_preferences_view.hpp"
 
@@ -52,112 +51,6 @@ constexpr Page pages[] = {
      playback_preferences_view::handle_input, nullptr, false},
 };
 
-class PresetFooter {
-public:
-    static constexpr int height = 118;
-
-    PresetFooter(const Colors &colors, HINSTANCE module) : colors_(colors) {
-        icons_.load(module, preset_footer_icons::resource, preset_footer_icons::size, preset_footer_icons::count);
-    }
-
-    ~PresetFooter() { DeleteObject(font_); }
-
-    static HWND create(HWND parent, RECT area, bool light_theme) {
-        HINSTANCE module = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                reinterpret_cast<LPCWSTR>(&procedure), &module))
-            return nullptr;
-        WNDCLASSW cls{};
-        cls.hInstance = module;
-        cls.lpfnWndProc = procedure;
-        cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        cls.lpszClassName = L"VlcRedesignPresetFooter";
-        if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-            return nullptr;
-
-        auto footer = std::make_unique<PresetFooter>(light_theme ? light : dark, module);
-        const LONG width = area.right - area.left;
-        const auto window = CreateWindowExW(WS_EX_COMPOSITED, cls.lpszClassName, nullptr,
-                                            WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-                                            area.left, area.top, width, area.bottom - area.top,
-                                            parent, nullptr, module, nullptr);
-        if (!window)
-            return nullptr;
-        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(footer.release()));
-        constexpr DWORD style = WS_CHILD | WS_VISIBLE | WS_DISABLED | WS_CLIPSIBLINGS | BS_OWNERDRAW;
-        constexpr int inset = 16;
-        if (!CreateWindowExW(0, L"BUTTON", L"Default Preset", style, inset, 21, width - 2 * inset, 44,
-                             window, reinterpret_cast<HMENU>(preset_button), module, nullptr) ||
-            !CreateWindowExW(0, L"BUTTON", L"Open Advanced Settings", style, inset, 77, width - 2 * inset, 32,
-                             window, reinterpret_cast<HMENU>(advanced_button), module, nullptr)) {
-            DestroyWindow(window);
-            return nullptr;
-        }
-        return window;
-    }
-
-private:
-    static constexpr INT_PTR preset_button = 1, advanced_button = 2;
-    const Colors &colors_;
-    HFONT font_ = make_font(16);
-    IconStrip icons_;
-
-    void draw_background(HDC dc, RECT area) const {
-        fill(dc, area, colors_.panel);
-        fill(dc, {area.left, area.top, area.right, area.top + 1}, colors_.edge);
-    }
-
-    void draw_button(const DRAWITEMSTRUCT &item) const {
-        const auto area = item.rcItem;
-        const auto dc = item.hDC;
-        const auto label = window_text(item.hwndItem);
-        constexpr int size = preset_footer_icons::size;
-        const LONG center = (area.top + area.bottom) / 2;
-        fill(dc, area, colors_.panel);
-        if (item.CtlID == preset_button) {
-            round_rect(dc, area, 6, colors_.track);
-            icons_.draw(dc, area.right - 29 - size / 2, center - size / 2, preset_footer_icons::chevron);
-            text(dc, label.c_str(), {area.left + 17, area.top, area.right - 48, area.bottom}, font_, colors_.text);
-        } else {
-            const auto old = SelectObject(dc, font_);
-            SIZE label_size{};
-            GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &label_size);
-            SelectObject(dc, old);
-            constexpr int gap = 5;
-            const LONG x = (area.left + area.right - size - gap - label_size.cx) / 2;
-            icons_.draw(dc, x, center - size / 2, preset_footer_icons::settings);
-            text(dc, label.c_str(), {x + size + gap, area.top, area.right, area.bottom}, font_, colors_.dim);
-        }
-    }
-
-    static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
-        const auto footer = reinterpret_cast<PresetFooter *>(GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (footer) {
-            switch (message) {
-            case WM_ERASEBKGND: return 1;
-            case WM_PAINT:
-            case WM_PRINTCLIENT: {
-                RECT area{};
-                GetClientRect(window, &area);
-                if (message == WM_PAINT)
-                    paint(window, area, [&](HDC dc) { footer->draw_background(dc, area); });
-                else
-                    footer->draw_background(reinterpret_cast<HDC>(wp), area);
-                return 0;
-            }
-            case WM_DRAWITEM:
-                footer->draw_button(*reinterpret_cast<const DRAWITEMSTRUCT *>(lp));
-                return TRUE;
-            case WM_NCDESTROY:
-                SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-                delete footer;
-                break;
-            }
-        }
-        return DefWindowProcW(window, message, wp, lp);
-    }
-};
-
 struct Sidebar {
     HWND owner = nullptr;
     HWND toolbar = nullptr;
@@ -180,6 +73,11 @@ const Page *current_page() {
 
 HWND current_view() {
     return current_page() ? sidebar.views[sidebar.tab - 1] : nullptr;
+}
+
+void refresh_page() {
+    if (const auto view = current_view())
+        current_page()->set_visible(view, true);
 }
 
 bool modal_open() {
@@ -240,8 +138,8 @@ void place_view() {
               client.bottom - (sidebar.popup ? 0 : bottom) - body_bottom - corner};
     if (view.bottom <= view.top)
         return;
-    const bool show_footer = page->has_presets && view.bottom - view.top > PresetFooter::height;
-    const RECT footer{view.left, view.bottom - PresetFooter::height, view.right, view.bottom};
+    const bool show_footer = page->has_presets && view.bottom - view.top > preset_footer::height;
+    const RECT footer{view.left, view.bottom - preset_footer::height, view.right, view.bottom};
     auto &window = sidebar.views[sidebar.tab - 1];
     bool light_theme = false;
     if (!window || (show_footer && !sidebar.footer)) {
@@ -252,8 +150,9 @@ void place_view() {
             ReleaseDC(parent, dc);
     }
     if (show_footer && !sidebar.footer)
-        sidebar.footer = PresetFooter::create(parent, footer, light_theme);
+        sidebar.footer = preset_footer::create(parent, footer, view.top, sidebar.player, light_theme, refresh_page);
     if (sidebar.footer) {
+        preset_footer::close(sidebar.footer);
         if (show_footer) {
             view.bottom = footer.top;
             SetWindowPos(sidebar.footer, nullptr, footer.left, footer.top, footer.right - footer.left,
@@ -420,6 +319,8 @@ bool handle_gear(const MSG &message, subtitle_preferences::Player player, HWND f
 bool handle_message(const MSG &message) {
     if (!sidebar.owner || modal_open())
         return false;
+    if (preset_footer::handle_input(sidebar.footer, message))
+        return true;
     if (const auto page = current_page(); page && page->handle_input(current_view(), message))
         return true;
     if (message.message == WM_MOUSEWHEEL && sidebar.footer && IsWindowVisible(sidebar.footer)) {
@@ -468,7 +369,7 @@ bool handle_message(const MSG &message) {
 bool owns_input_target(HWND window) {
     const auto view = current_view();
     return (view && (window == view || IsChild(view, window) || modal_open())) ||
-           (sidebar.footer && (window == sidebar.footer || IsChild(sidebar.footer, window)));
+           preset_footer::owns_input_target(sidebar.footer, window);
 }
 
 bool handle_video_event(const MSG &message) {

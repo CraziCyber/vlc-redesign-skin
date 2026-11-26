@@ -64,6 +64,11 @@ bool contains_filter(std::string_view chain, std::string_view target) {
     return filter_position(chain, target) != chain.npos;
 }
 
+bool preset_filter(std::string_view name, std::string_view) {
+    return name == equalizer || name == pitch_filter ||
+           std::find(std::begin(filters), std::end(filters), name) != std::end(filters);
+}
+
 void enable_filter(VlcPlayer player, const char *filter, bool enabled) {
     playlist_EnableAudioFilter(player.playlist, filter, enabled);
     const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
@@ -128,8 +133,7 @@ void write_gains(VlcPlayer player, AudioOutput *output, const EqualizerGains &ga
 }
 
 Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
-    const auto input = audio_input(player);
-    VlcValue delay{}, pitch{}, two_pass{};
+    VlcValue pitch{}, two_pass{};
     const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
     const auto chain = string_option(player, output.get(), filter_key);
     const auto key = string_option(player, output.get(), preset_key);
@@ -154,8 +158,7 @@ Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
         selection = matches ? key : "custom";
     }
     return {
-        input && var_Get(input.get(), delay_key, &delay) == 0
-            ? std::optional<double>(delay.integer / ticks_per_second) : std::nullopt,
+        delay(player),
         static_cast<int>(config_GetInt(player.vlc, stereo_key)),
         std::move(selection),
         gains,
@@ -169,6 +172,14 @@ Settings read(VlcPlayer player, const std::vector<Preset> &presets) {
         read_filter_values(player, output.get(), spatializer_parameters),
         read_filter_values(player, output.get(), widener_parameters),
     };
+}
+
+std::optional<double> delay(VlcPlayer player) {
+    const auto input = audio_input(player);
+    VlcValue value{};
+    if (input && var_Get(input.get(), delay_key, &value) == 0)
+        return value.integer / ticks_per_second;
+    return std::nullopt;
 }
 
 std::vector<Preset> equalizer_presets(VlcPlayer player) {
@@ -204,11 +215,12 @@ void set_stereo_mode(VlcPlayer player, int mode) {
         var_Set(output.get(), stereo_key, VlcValue{mode});
 }
 
-void set_delay(VlcPlayer player, double seconds) {
+bool set_delay(VlcPlayer player, double seconds) {
     const auto input = audio_input(player);
+    if (!input || !std::isfinite(seconds))
+        return false;
     const auto ticks = std::llround(std::clamp(seconds, -10.0, 10.0) * ticks_per_second);
-    if (input)
-        var_Set(input.get(), delay_key, VlcValue{ticks});
+    return var_Set(input.get(), delay_key, VlcValue{ticks}) == 0;
 }
 
 void set_equalizer(VlcPlayer player, const Preset *preset) {
@@ -276,6 +288,80 @@ void set_pitch(VlcPlayer player, float semitones) {
     const auto chain = string_option(player, output.get(), filter_key);
     if (contains_filter(chain, pitch_filter) != (value != 0))
         enable_filter(player, pitch_filter, value != 0);
+}
+
+void append_preset_keys(std::vector<const char *> &keys) {
+    keys.insert(keys.end(), {stereo_key, preset_key, bands_key, preamp_key, two_pass_key, pitch_key, "audio-desync"});
+    for (const auto &parameter : compressor_parameters)
+        keys.push_back(parameter.key);
+    for (const auto &parameter : spatializer_parameters)
+        keys.push_back(parameter.key);
+    for (const auto &parameter : widener_parameters)
+        keys.push_back(parameter.key);
+}
+
+std::string preset_filters(VlcPlayer player) {
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    return vlc_config::split_filters(string_option(player, output.get(), filter_key), preset_filter).selected;
+}
+
+void apply_preset(VlcPlayer player, std::string_view selected) {
+    const AudioOutputRef output(playlist_GetAout(player.playlist), vlc_object_release);
+    const auto configured = string_option(player, nullptr, filter_key);
+    const auto chain = vlc_config::replace_filters(configured, selected, preset_filter);
+    if (chain != configured)
+        config_PutPsz(player.vlc, filter_key, chain.c_str());
+
+    if (player.playlist && var_Type(player.playlist, filter_key)) {
+        VlcValue value{};
+        if (var_Get(player.playlist, filter_key, &value) == 0) {
+            const auto before = vlc_config::take_string(value.string);
+            auto next = vlc_config::replace_filters(before, selected, preset_filter);
+            if (next != before) {
+                value.string = next.data();
+                var_Set(player.playlist, filter_key, value);
+            }
+        }
+    }
+    if (!output)
+        return;
+
+    const auto live_string = [&](const char *key) {
+        const auto configured = string_option(player, nullptr, key);
+        if (string_option(player, output.get(), key) != configured)
+            set_string(output.get(), key, configured);
+    };
+    const auto live_float = [&](const char *key) {
+        VlcValue value{};
+        const float configured = config_GetFloat(player.vlc, key);
+        if (var_Get(output.get(), key, &value) != 0 || value.real != configured)
+            set_float(output.get(), key, configured);
+    };
+    VlcValue mode{};
+    const auto configured_mode = config_GetInt(player.vlc, stereo_key);
+    if (var_Get(output.get(), stereo_key, &mode) == 0 && mode.integer != configured_mode)
+        var_Set(output.get(), stereo_key, VlcValue{configured_mode});
+    live_string(preset_key);
+    live_string(bands_key);
+    live_float(preamp_key);
+    live_float(pitch_key);
+    VlcValue pass{};
+    pass.boolean = config_GetInt(player.vlc, two_pass_key) != 0;
+    var_Set(output.get(), two_pass_key, pass);
+    for (const auto &parameter : compressor_parameters)
+        live_float(parameter.key);
+    for (const auto &parameter : spatializer_parameters)
+        live_float(parameter.key);
+    for (const auto &parameter : widener_parameters)
+        if (!parameter.reload)
+            live_float(parameter.key);
+
+    const auto previous = string_option(player, output.get(), filter_key);
+    auto next = vlc_config::replace_filters(previous, selected, preset_filter);
+    if (next != previous)
+        set_string(output.get(), filter_key, std::move(next));
+    else if (contains_filter(previous, widener_filter))
+        reload_widener(player);
 }
 
 }

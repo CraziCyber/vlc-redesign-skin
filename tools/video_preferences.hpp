@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "vlc_input.hpp"
 
@@ -109,6 +110,14 @@ void apply_color_settings(VlcPlayer player, ColorEffect effect, const ColorSetti
 const EffectOption &effect_option(EffectValue id);
 EffectSettings effect_settings(VlcPlayer player);
 void apply_effect_settings(VlcPlayer player, VideoEffect effect, const EffectSettings &settings);
+
+struct PresetFilters {
+    std::string video, overlays;
+};
+
+void append_preset_keys(std::vector<const char *> &keys);
+PresetFilters preset_filters(VlcPlayer player);
+void apply_preset(VlcPlayer player, const PresetFilters &filters);
 
 inline constexpr char software_video_filter[] = "redesignsoftwarevideo";
 int open_software_video_filter(void *object);

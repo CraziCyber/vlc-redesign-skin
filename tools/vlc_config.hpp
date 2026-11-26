@@ -88,4 +88,12 @@ inline FilterChain split_filter(std::string_view chain, std::string_view target)
     return split_filters(chain, [target](std::string_view name, std::string_view) { return name == target; });
 }
 
+template<class Match>
+std::string replace_filters(std::string_view previous, std::string_view selected, Match matches) {
+    auto chain = split_filters(previous, matches);
+    append_filter(chain.before, selected);
+    append_filter(chain.before, chain.after);
+    return chain.before;
+}
+
 }
