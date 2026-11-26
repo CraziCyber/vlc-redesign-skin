@@ -271,13 +271,13 @@ def control_bar(L, art, oy, W, *, kind, bg, last):
     select_first = f"preferenceswin.setLayout({lid(t, 'preferences1')})"
     if fixed:
         L.toggle("preferenceswin.isVisible", settings, settings_active, f"{select_first};preferenceswin.show()",
-                 "preferenceswin.hide()", "Preferences", "Close preferences", x=W - 100, y=oy + 11, anchor=A("br"))
+                 "preferenceswin.hide()", x=W - 100, y=oy + 11, anchor=A("br"))
     elif kind.endswith("_preferences"):
         L.button(settings_active, W - 100, oy + 11, f"main.setLayout({lid(t, kind.removesuffix('_preferences'))})",
-                 "Close preferences", anchor=A("br"))
+                 anchor=A("br"))
     else:
         L.button(settings, W - 100, oy + 11, f"{select_first};main.setLayout({lid(t, kind + '_preferences')})",
-                 "Preferences", anchor=A("br"))
+                 anchor=A("br"))
     last(W - 50, oy + 11, A("br"))
 
 
