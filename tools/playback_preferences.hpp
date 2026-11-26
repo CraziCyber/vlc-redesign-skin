@@ -16,8 +16,8 @@ inline constexpr TimerChoice timers[] = {
 
 struct VisualizerChoice { const wchar_t *label; const char *mode; };
 inline constexpr VisualizerChoice visualizers[] = {
-    {L"Disabled", "none"}, {L"Spectrum", "spectrum"}, {L"Oscilloscope", "scope"},
-    {L"Spectrometer", "spectrometer"}, {L"VU Meter", "vuMeter"},
+    {L"Disabled", "none"}, {L"Spectometer", "spectrometer"}, {L"Scope", "scope"},
+    {L"Spectrum", "spectrum"}, {L"Waveform", "scope,vuMeter"},
 };
 
 struct Settings {

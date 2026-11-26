@@ -103,6 +103,20 @@ def write_crop_link_icons(directory):
     return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
 
 
+def write_visualizer_icons(directory):
+    size, resource = 24, 106
+    # The choices after Disabled, followed by the selection check.
+    cells = [(108, 592), (196, 592), (152, 592), (240, 592), (240, 416)]
+    bitmap = directory / "visualizer_icons.bgra"
+    write_icon_strip(bitmap, size, cells)
+    (directory / "visualizer_icons.hpp").write_text(
+        "#pragma once\n\nnamespace visualizer_icons {\n"
+        f"constexpr int resource = {resource}, size = {size}, count = {len(cells)}, check = count - 1;\n"
+        "}\n", encoding="ascii",
+    )
+    return f'{resource} RCDATA "{bitmap.as_posix()}"\n'
+
+
 def build_module(output, toolchain):
     with TemporaryDirectory() as temporary:
         temp = Path(temporary)
@@ -120,6 +134,7 @@ def build_module(output, toolchain):
         with resource_script.open("a", encoding="utf-8") as script:
             script.write(write_preset_icons(temp))
             script.write(write_crop_link_icons(temp))
+            script.write(write_visualizer_icons(temp))
             dialog_resource = ROOT / "tools/add_subtitles.rc"
             script.write(f'#include "{dialog_resource.as_posix()}"\n')
         subprocess.run([toolchain / "windres.exe", "-c", "65001", "-i", resource_script,
