@@ -36,12 +36,12 @@ show up to ten tracks at a time. The **Audio** tab lists output devices reported
 
 | Figma | In the skin |
 | --- | --- |
-| Player (247:445), Controls (491:1779) | Main window: 40 px top bar, rounded video area, 54 px control bar with seek fill, wedge volume (0–200 %, 100 % in the middle, as VLC maps it), equalizer, subtitles, playback and playlist buttons. Resizable. |
+| Player (247:445), Controls (491:1779) | Resizable main window with a 40 px top bar, rounded video area and 54 px control bar with seek fill, wedge volume (0-200 %, 100 % in the middle, as VLC maps it), audio tracks, subtitles, preferences and playlist buttons. |
 | Player - Music (4767:23726) | With audio and no video, the cover is centred above the title; without a cover, just the title. With nothing to show, the video area is black, as in VLC. |
 | Player with sidebar (187:328), sidebar (848:1996) | Playlist layout: a rail (open files, folder, disc, network stream, media info, preferences) and a panel with shuffle, repeat (all / one), sort, load, save, remove, add, and the playlist itself, with the playing item in orange. |
-| Player - Light (2425:13624) | Every layout also comes in light. The "..." menu switches theme, and the equalizer and fullscreen bar follow. |
+| Player - Light (2425:13624) | Every layout also comes in light. The "..." menu switches the theme for the player, track panel and fullscreen bar. |
 | Miniplayer (970:3090) | 391 × 339 mini player: video or cover, progress, title, controls and time. |
-| Audio - Equalizer (6114:13610), Toggle (536:1014) | Equalizer window: preamp and 10 bands with the Figma sliders, plus the ON/OFF toggle. |
+| Audio - Equalizer (6114:13610), Toggle (536:1014) | The Audio tab in the preferences sidebar has equalizer presets, preamp and 10 bands with sliders and editable dB values. |
 | Player - hide UI (3328:11554) | Hide UI slides the title bar up and the controls down inside the player window. Fullscreen remains a separate action. |
 | menu (6062:13354), right-click menu (6065:13616) | The "..." menu opens media, view and settings. The Windows module draws the rounded right-click menu with the original icon sheet and displays configured VLC shortcuts. |
 | Icon set (42:356) | Every icon, cut from the sheet at 1×. |
@@ -59,8 +59,6 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
   `src/tooltip.cpp`). The skin only picks their font (`tooltipfont`, here Inter 12).
 - **Translucency** fails (see below), so the music view has no blurred backdrop, and the cover
   has square corners.
-- **The equalizer's dB boxes** are missing: skins2 has no text variable for band values.
-  A −20 / 0 / +20 dB scale stands in for them.
 - **±10 s skip buttons and the waveform seek bar** from the music controls: skins2 has no
   seek-by action, and no access to the audio to draw a waveform from.
 - **The breadcrumb** shows the media's folder in Figma; skins2 does not know it, so the button
@@ -71,8 +69,9 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
 
 ## How it is built (and what skins2 taught)
 
-- `build.py`: the layouts. It creates three windows. `main` has six layouts (full, sidebar and
-  mini, each in dark and light). `eqwin` and `fullscreenController` have one layout per theme.
+- `build.py`: the layouts. The main player has dark and light layouts for the full player,
+  playlist and mini player. The full player and playlist also have preferences sidebar layouts.
+  The fullscreen preferences layouts hold the selected tab for the main player as well.
 - `skinlib/`: the theme.xml builder (`skin.py`, `xmlgen.py`), the drawing helpers and Figma
   icon map (`paint.py`), and the colours (`palette.py`).
 - `reference/figma/`: the Figma screenshots and page metadata the measurements came from.
@@ -83,7 +82,7 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
 - `tools/sheet_stats.py`: sizes of the sprite sheets and how much of each is used.
 - `tools/run_skin.py`: launches VLC with the skin (`--ignore-config`, so your settings are not
   touched), drives it through the rc interface and saves screenshots of VLC's windows only.
-  `build.py --start light_side --show-eq --preview-fsc` sets up the views to capture.
+  `build.py --start light_side --preview-fsc` sets up the views to capture.
 - The build is reproducible: building twice gives byte-identical files in `dist/`, so a
   commit only shows `dist/` changing when the skin did.
 
@@ -95,10 +94,9 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
    only logs a warning and leaves the control dead, so the checker makes sure every image,
    font, action, variable and text token is one skins2 knows (lists from VLC 3.0's source),
    and that every control lies inside its layout.
-2. **`python tools/smoke_test.py`** runs the skin in VLC (`--ignore-config`) and checks 37
-   things across the dark and light player, the sidebar, the mini player and the equalizer:
+2. **`python tools/smoke_test.py`** runs the skin in VLC (`--ignore-config`) and checks
    play/pause, seeking and volume by clicking, mute, next/previous, the music cover, the
-   equalizer window and its toggle, shuffle and the repeat cycle, sidebar open/close,
+   audio and subtitle track buttons, shuffle and the repeat cycle, sidebar open/close,
    maximize/restore, expanding the mini player, the "..." menu's playlist, mini player and
    theme items, and quitting. It clicks by posting mouse
    messages to VLC's window (and keystrokes to its menus), so the real cursor never moves, reads VLC's state from its HTTP
@@ -110,7 +108,7 @@ skins2 is VLC 3's skin engine. It draws the player's own windows and nothing els
    minimum size, a title too long to fit (it scrolls, as VLC skins do), and a 30-item
    playlist.
 4. **By hand**, what the test cannot reach:
-   - the rest of the "..." menu and the playback menu
+   - the rest of the "..." menu and the preferences sidebar
    - fullscreen and its floating bar, which appears on mouse movement
    - dragging the window, resizing it from the right and bottom edges, and minimizing
    - dragging files onto the window, tooltips, and scrolling a long playlist

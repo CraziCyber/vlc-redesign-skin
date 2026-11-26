@@ -25,6 +25,7 @@ namespace {
 constexpr LONG default_width = 1280, default_height = 720;
 constexpr LONG player_min_width = 860, playlist_min_width = 1040, min_height = 420;
 constexpr UINT_PTR layout_subclass = 1;
+constexpr std::string_view main_entry = "[\"main\" \"";
 
 LONG edge(LONG origin, LONG size) {
     return static_cast<LONG>(std::clamp(static_cast<long long>(origin) + size,
@@ -69,22 +70,78 @@ void resize_skin_layout(HWND window, const LayoutChange &change) {
     SendMessageW(window, WM_LBUTTONUP, 0, target);
 }
 
+void click_layout(HWND window, LPARAM position, bool release_only, const RECT &before, LONG target_width) {
+    LayoutChange change{target_width, before.bottom, before.right, before.bottom};
+    const bool preserve_size = target_width > 0;
+    const bool keep_size = preserve_size &&
+        SetWindowSubclass(window, keep_window_size, layout_subclass, reinterpret_cast<DWORD_PTR>(&change));
+    if (!release_only) {
+        SendMessageW(window, WM_MOUSEMOVE, 0, position);
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
+    }
+    SendMessageW(window, WM_LBUTTONUP, 0, position);
+    if (keep_size) {
+        RemoveWindowSubclass(window, keep_window_size, layout_subclass);
+    } else if (preserve_size) {
+        RECT after{};
+        if (!GetClientRect(window, &after))
+            return;
+        change.layout_width = after.right;
+        change.layout_height = after.bottom;
+    }
+
+    if (preserve_size) {
+        resize_skin_layout(window, change);
+        InvalidateRect(window, nullptr, FALSE);
+    }
+    POINT mouse{};
+    if (GetCursorPos(&mouse) && ScreenToClient(window, &mouse))
+        SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(mouse.x, mouse.y));
+}
+
+void remove_saved_window(std::string &config, std::string_view entry) {
+    const auto begin = config.find(entry);
+    if (begin == std::string::npos)
+        return;
+    const auto end = config.find(']', begin);
+    if (end != std::string::npos)
+        config.erase(begin, end - begin + 1);
+}
+
+void dismiss_saved_preferences(std::string &config) {
+    remove_saved_window(config, "[\"preferenceswin\" ");
+    const auto main = config.find(main_entry);
+    if (main == std::string::npos)
+        return;
+    constexpr std::string_view suffix = "_preferences";
+    const auto begin = main + main_entry.size();
+    const auto end = config.find('"', begin);
+    if (end != std::string::npos && end - begin > suffix.size() &&
+        config.compare(end - suffix.size(), suffix.size(), suffix) == 0)
+        config.erase(end - suffix.size(), suffix.size());
+}
+
 }
 
 void restore_startup_bounds(void *vlc) {
     constexpr const char *option = "skins2-config";
-    constexpr std::string_view prefix = "[\"main\" \"";
     std::unique_ptr<char, decltype(&libvlc_free)> saved(config_GetPsz(vlc, option), libvlc_free);
     if (!saved)
         return;
     std::string config(saved.get());
-    const auto entry = config.find(prefix);
+    // Skins2 rejects saved layouts that refer to a removed window.
+    remove_saved_window(config, "[\"eqwin\" ");
+    dismiss_saved_preferences(config);
+    if (config != saved.get())
+        config_PutPsz(vlc, option, config.c_str());
+    const auto entry = config.find(main_entry);
     if (entry == std::string::npos)
         return;
-    const auto layout_end = config.find('"', entry + prefix.size());
+    const auto layout_start = entry + main_entry.size();
+    const auto layout_end = config.find('"', layout_start);
     if (layout_end == std::string::npos)
         return;
-    const std::string_view layout(config.data() + entry + prefix.size(), layout_end - entry - prefix.size());
+    const std::string_view layout(config.data() + layout_start, layout_end - layout_start);
     const bool sidebar = layout == "dark_side" || layout == "light_side";
     if (!sidebar && layout != "dark_full" && layout != "light_full")
         return;
@@ -133,34 +190,22 @@ void restore_startup_bounds(void *vlc) {
 
 void toggle_playlist(HWND window, LPARAM position, bool release_only) {
     RECT before{};
-    if (!GetClientRect(window, &before))
-        return;
-    LayoutChange change{std::max(before.right, playlist_min_width), before.bottom, before.right, before.bottom};
-    const bool keep_size = before.bottom >= min_height &&
-        SetWindowSubclass(window, keep_window_size, layout_subclass, reinterpret_cast<DWORD_PTR>(&change));
-    if (!release_only) {
-        SendMessageW(window, WM_MOUSEMOVE, 0, position);
-        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, position);
-    }
-    SendMessageW(window, WM_LBUTTONUP, 0, position);
-    if (keep_size) {
-        RemoveWindowSubclass(window, keep_window_size, layout_subclass);
-    } else {
-        RECT after{};
-        if (!GetClientRect(window, &after))
-            return;
-        change.layout_width = after.right;
-        change.layout_height = after.bottom;
-    }
-
     // The mini player intentionally switches to the regular player.
-    if (before.bottom >= min_height) {
-        resize_skin_layout(window, change);
-        InvalidateRect(window, nullptr, FALSE);
-    }
-    POINT mouse{};
-    if (GetCursorPos(&mouse) && ScreenToClient(window, &mouse))
-        SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(mouse.x, mouse.y));
+    if (GetClientRect(window, &before))
+        click_layout(window, position, release_only, before,
+                     before.bottom >= min_height ? std::max(before.right, playlist_min_width) : 0);
+}
+
+void press_layout_button(HWND window, LPARAM position, bool release_only) {
+    RECT before{};
+    if (GetClientRect(window, &before))
+        click_layout(window, position, release_only, before, before.right);
+}
+
+void resize_layout(HWND window, LONG width, LONG height) {
+    RECT before{};
+    if (GetClientRect(window, &before))
+        resize_skin_layout(window, {width, height, before.right, before.bottom});
 }
 
 }
