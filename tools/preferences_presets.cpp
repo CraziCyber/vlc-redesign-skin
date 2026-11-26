@@ -208,6 +208,21 @@ std::string serialize(const Presets &presets) {
     return data.str();
 }
 
+std::string saved_settings(void *vlc) {
+    return vlc_config::take_string(config_GetPsz(vlc, settings_key));
+}
+
+bool save_catalog(void *vlc, const std::string &catalog, const Presets &presets, const std::string &previous_settings) {
+    const auto previous_catalog = vlc_config::take_string(config_GetPsz(vlc, names_key));
+    config_PutPsz(vlc, names_key, catalog.c_str());
+    config_PutPsz(vlc, settings_key, serialize(presets).c_str());
+    if (vlc_config::save(vlc))
+        return true;
+    config_PutPsz(vlc, names_key, previous_catalog.c_str());
+    config_PutPsz(vlc, settings_key, previous_settings.c_str());
+    return false;
+}
+
 std::string read_active_name(void *vlc) {
     std::istringstream data(vlc_config::take_string(config_GetPsz(vlc, names_key)));
     std::size_t selected = 0;
@@ -275,7 +290,7 @@ void load_playback(void *vlc) {
     playback.loaded = true;
     playback.name = read_active_name(vlc);
     if (!playback.name.empty()) {
-        const auto presets = read_presets(vlc_config::take_string(config_GetPsz(vlc, settings_key)));
+        const auto presets = read_presets(saved_settings(vlc));
         const auto found = presets.find(playback.name);
         if (found != presets.end())
             playback.values = found->second.timing;
@@ -327,21 +342,21 @@ Timing *edited_timing(VlcPlayer player) {
     return &*playback.values;
 }
 
-}
-
-bool select(VlcPlayer player, const std::string &previous, const std::string &selected, const std::string &catalog) {
-    const std::lock_guard lock(mutex);
-    load_playback(player.vlc);
+bool apply_selection(VlcPlayer player, const std::string &previous, const std::string &selected,
+                     const std::string &catalog, bool keep_previous) {
     const InputRef input(playlist_CurrentInput(player.playlist), vlc_object_release);
     if (!previous.empty())
         update_timing(player, input.get());
     const auto timing = !previous.empty() && playback.values ? *playback.values : read_timing(player);
     const auto before = capture(player, timing);
-    const auto old_names = vlc_config::take_string(config_GetPsz(player.vlc, names_key));
-    const auto old_settings = vlc_config::take_string(config_GetPsz(player.vlc, settings_key));
+    const auto old_settings = saved_settings(player.vlc);
     auto presets = read_presets(old_settings);
-    if (!previous.empty())
-        presets[previous] = before;
+    if (!previous.empty()) {
+        if (keep_previous)
+            presets[previous] = before;
+        else
+            presets.erase(previous);
+    }
 
     const auto found = presets.find(selected);
     const bool restore = selected.empty() || found != presets.end();
@@ -356,13 +371,9 @@ bool select(VlcPlayer player, const std::string &previous, const std::string &se
     }
     if (restore)
         apply_options(player, next);
-    config_PutPsz(player.vlc, names_key, catalog.c_str());
-    config_PutPsz(player.vlc, settings_key, serialize(presets).c_str());
-    if (!vlc_config::save(player.vlc)) {
+    if (!save_catalog(player.vlc, catalog, presets, old_settings)) {
         if (restore)
             apply_options(player, before);
-        config_PutPsz(player.vlc, names_key, old_names.c_str());
-        config_PutPsz(player.vlc, settings_key, old_settings.c_str());
         return false;
     }
 
@@ -373,6 +384,47 @@ bool select(VlcPlayer player, const std::string &previous, const std::string &se
     if (selected.empty())
         playback.attach(nullptr);
     return true;
+}
+
+}
+
+bool select(VlcPlayer player, const std::string &previous, const std::string &selected, const std::string &catalog) {
+    const std::lock_guard lock(mutex);
+    load_playback(player.vlc);
+    return apply_selection(player, previous, selected, catalog, true);
+}
+
+bool rename(VlcPlayer player, const std::string &previous, const std::string &renamed, const std::string &catalog) {
+    const std::lock_guard lock(mutex);
+    load_playback(player.vlc);
+    const auto old_settings = saved_settings(player.vlc);
+    auto presets = read_presets(old_settings);
+    const bool active = playback.name == previous;
+    if (active) {
+        const InputRef input(playlist_CurrentInput(player.playlist), vlc_object_release);
+        update_timing(player, input.get());
+        const auto timing = playback.values ? *playback.values : read_timing(player);
+        presets.erase(previous);
+        presets[renamed] = capture(player, timing);
+    } else if (auto saved = presets.extract(previous)) {
+        presets.insert_or_assign(renamed, std::move(saved.mapped()));
+    }
+    if (!save_catalog(player.vlc, catalog, presets, old_settings))
+        return false;
+    if (active)
+        playback.name = renamed;
+    return true;
+}
+
+bool remove(VlcPlayer player, const std::string &name, const std::string &catalog) {
+    const std::lock_guard lock(mutex);
+    load_playback(player.vlc);
+    if (playback.name == name)
+        return apply_selection(player, name, {}, catalog, false);
+    const auto old_settings = saved_settings(player.vlc);
+    auto presets = read_presets(old_settings);
+    presets.erase(name);
+    return save_catalog(player.vlc, catalog, presets, old_settings);
 }
 
 void set_audio_delay(VlcPlayer player, double seconds) {
@@ -427,7 +479,7 @@ void release(VlcPlayer player) {
         update_timing(player, input.get());
     }
     if (!playback.name.empty() && playback.values) {
-        const auto previous = vlc_config::take_string(config_GetPsz(player.vlc, settings_key));
+        const auto previous = saved_settings(player.vlc);
         auto presets = read_presets(previous);
         presets[playback.name] = capture(player, *playback.values);
         config_PutPsz(player.vlc, settings_key, serialize(presets).c_str());
