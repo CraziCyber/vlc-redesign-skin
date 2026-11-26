@@ -18,7 +18,8 @@ using namespace video_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignVideoPreferences";
 constexpr int inset = 20, label_inset = 24, rotate_width = 142, dropdown_width = 220;
 constexpr int flip_top = 103, flip_height = 44, rotate_top = 173, rotate_height = 36;
-constexpr int dropdown_top = 235, dropdown_height = 48, row_stride = 68, option_height = 33;
+constexpr int dropdown_top = 235, dropdown_height = 48, row_stride = 68;
+constexpr int default_option_height = 46, filter_option_height = 33;
 constexpr const wchar_t *filter_names[] = {L"Essential", L"Crop", L"Colors", L"Geometry", L"Overlay", L"Advanced"};
 constexpr int filter_count = std::size(filter_names);
 constexpr int filters_top = 645, first_filter_top = filters_top + 81;
@@ -56,6 +57,10 @@ constexpr CropEdge paired_edges[] = {bottom_edge, top_edge, right_edge, left_edg
 static_assert(std::size(crop_names) == crop_edge_count && std::size(paired_edges) == crop_edge_count);
 constexpr Field field(Control id) { return static_cast<Field>(id - zoom); }
 static_assert(field(crop) == Field::crop);
+
+constexpr int option_height(Control id) {
+    return id >= zoom && id <= render ? default_option_height : filter_option_height;
+}
 
 struct FilterSection {
     Control header, first, last;
@@ -342,7 +347,6 @@ private:
                 return false;
         }
         SendMessageW(control(rotate), EM_SETLIMITTEXT, 24, 0);
-        SendMessageW(control(options_list), LB_SETITEMHEIGHT, 0, option_height);
         refresh();
         return true;
     }
@@ -1097,14 +1101,16 @@ private:
     void populate_dropdown(const std::vector<std::wstring> &labels, int selected, int keep_top = 0, int focused = -1) {
         applied_option_ = selected;
         const auto list = control(options_list);
+        const int row_height = option_height(*dropdown_);
         SendMessageW(list, WM_SETREDRAW, FALSE, 0);
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
+        SendMessageW(list, LB_SETITEMHEIGHT, 0, row_height);
         for (const auto &label : labels)
             SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
 
         const auto area = bounds();
         const auto anchor = box(*dropdown_, area.right);
-        place_dropdown_over_field(list, anchor, area.bottom, option_height, std::min<int>(labels.size(), 7));
+        place_dropdown_over_field(list, anchor, area.bottom, row_height, std::min<int>(labels.size(), 7));
         if (keep_top)
             SendMessageW(list, LB_SETTOPINDEX, keep_top, 0);
         SendMessageW(list, LB_SETCURSEL, focused < 0 ? selected : focused, 0);
@@ -1224,7 +1230,7 @@ private:
                 option_wheel_ += GET_WHEEL_DELTA_WPARAM(message.wParam);
                 const int current = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
                 const int count = SendMessageW(list, LB_GETCOUNT, 0, 0);
-                const int visible = std::max(1L, (menu.bottom - menu.top) / option_height);
+                const int visible = std::max(1L, (menu.bottom - menu.top) / option_height(*dropdown_));
                 const int next = std::clamp(current - 2 * (option_wheel_ / WHEEL_DELTA), 0, std::max(0, count - visible));
                 option_wheel_ %= WHEEL_DELTA;
                 if (next != current)

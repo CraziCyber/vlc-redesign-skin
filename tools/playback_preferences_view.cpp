@@ -15,8 +15,7 @@ namespace {
 using namespace preferences_widgets;
 using namespace playback_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignPlaybackPreferences";
-constexpr int inset = 22, option_height = 34, content_height = 444;
-constexpr int visualizer_row_height = 46;
+constexpr int inset = 22, dropdown_row_height = 46, content_height = 444;
 constexpr UINT_PTR refresh_timer = 1;
 static_assert(dropdown_icons::visualizer_count + 1 == std::size(visualizers));
 
@@ -343,8 +342,6 @@ private:
         text(dc, timer ? timers[index].label : visualizers[index].label, area, font_, colors_.text);
     }
 
-    int row_height() const { return dropdown_ == visualizer ? visualizer_row_height : option_height; }
-
     void open_dropdown(Control id) {
         close_dropdown(false);
         reveal(control(id));
@@ -353,8 +350,7 @@ private:
         const auto list = control(options);
         SendMessageW(list, WM_SETREDRAW, FALSE, 0);
         SendMessageW(list, LB_RESETCONTENT, 0, 0);
-        const int row = row_height();
-        SendMessageW(list, LB_SETITEMHEIGHT, 0, row);
+        SendMessageW(list, LB_SETITEMHEIGHT, 0, dropdown_row_height);
         const int selected = id == sleep ? timer_choice() : current_.visualizer;
         if (id == sleep) {
             for (const auto &choice : timers)
@@ -363,7 +359,8 @@ private:
             for (const auto &choice : visualizers)
                 SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.label));
         }
-        place_dropdown_over_field(list, box(id), bounds().bottom, row, SendMessageW(list, LB_GETCOUNT, 0, 0));
+        place_dropdown_over_field(list, box(id), bounds().bottom, dropdown_row_height,
+                                  SendMessageW(list, LB_GETCOUNT, 0, 0));
         SendMessageW(list, LB_SETCURSEL, selected, 0);
         SendMessageW(list, WM_SETREDRAW, TRUE, 0);
         ShowWindow(list, SW_SHOWNOACTIVATE);
@@ -429,7 +426,7 @@ private:
                 option_wheel_ += GET_WHEEL_DELTA_WPARAM(message.wParam);
                 const int top = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
                 const int count = SendMessageW(list, LB_GETCOUNT, 0, 0);
-                const int visible = std::max(1L, (area.bottom - area.top) / row_height());
+                const int visible = std::max(1L, (area.bottom - area.top) / dropdown_row_height);
                 const int next = std::clamp(top - 2 * (option_wheel_ / WHEEL_DELTA), 0, std::max(0, count - visible));
                 option_wheel_ %= WHEEL_DELTA;
                 if (next != top)

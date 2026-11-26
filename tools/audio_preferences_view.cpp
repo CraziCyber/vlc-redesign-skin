@@ -17,8 +17,8 @@ namespace {
 using namespace preferences_widgets;
 using namespace audio_preferences;
 constexpr wchar_t class_name[] = L"VlcRedesignAudioPreferences";
-constexpr int inset = 20, label_inset = 24, field_width = 142, toggle_width = 68, option_height = 27;
-constexpr int preset_height = 46, preset_list_height = 300;
+constexpr int inset = 20, label_inset = 24, field_width = 142, toggle_width = 68;
+constexpr int dropdown_row_height = 46, preset_list_height = 300;
 constexpr int sync_y = 292, filters_y = 476, compressor_y = 756, spatializer_y = 881;
 constexpr int widener_y = 1006, pitch_y = 1131, content_height = 1229;
 constexpr int expand_height = 48, detail_inset = 16, slider_units = 10;
@@ -411,7 +411,7 @@ private:
             if (!list)
                 return false;
             SendMessageW(list, WM_SETFONT, reinterpret_cast<WPARAM>(regular_), FALSE);
-            SendMessageW(list, LB_SETITEMHEIGHT, 0, id == choices ? option_height : preset_height);
+            SendMessageW(list, LB_SETITEMHEIGHT, 0, dropdown_row_height);
         }
         preset_icons_.load(module);
         dropdown_check_.load(module);
@@ -813,7 +813,7 @@ private:
         const bool equalizer_list = id == equalizer;
         int preset_menu_height = 0;
         if (equalizer_list) {
-            const int desired = std::min<int>(preset_list_height, (labels.size() - 1) * preset_height);
+            const int desired = std::min<int>(preset_list_height, (labels.size() - 1) * dropdown_row_height);
             const int height = std::min<int>(desired, std::max(1L, area.bottom - (box.bottom - box.top)));
             const int offset = scroll_.offset();
             const int shortage = std::max(0L, box.bottom + height - area.bottom);
@@ -842,7 +842,7 @@ private:
             InvalidateRect(field, nullptr, FALSE);
             SetWindowPos(list, HWND_TOP, box.left, box.bottom, width, preset_menu_height, SWP_NOACTIVATE | SWP_NOREDRAW);
         } else {
-            place_dropdown_over_field(list, box, area.bottom, option_height, std::min<int>(labels.size(), 8));
+            place_dropdown_over_field(list, box, area.bottom, dropdown_row_height, static_cast<int>(labels.size()));
         }
         SendMessageW(list, LB_SETCURSEL, equalizer_list ? -1 : selected, 0);
         ShowWindow(list, SW_SHOWNOACTIVATE);
@@ -858,8 +858,7 @@ private:
         GetClientRect(list, &area);
         const int count = SendMessageW(list, LB_GETCOUNT, 0, 0);
         const int current = SendMessageW(list, LB_GETTOPINDEX, 0, 0);
-        const int row_height = id == equalizer ? preset_height : option_height;
-        const int visible = std::max(1L, area.bottom / row_height);
+        const int visible = std::max(1L, area.bottom / dropdown_row_height);
         int step = 2;
         if (id == stereo_mode) {
             UINT lines = 3;
